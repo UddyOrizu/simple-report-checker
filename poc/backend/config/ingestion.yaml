@@ -1,0 +1,9 @@
+ocr_confidence_threshold: 0.6        # below this, chunk flagged low_confidence_ocr
+native_text_char_threshold: 20       # PDF page text length above which it's treated as native, not scanned
+short_document_page_threshold: 5     # documents at or below this page count skip structural-index building
+topic_shift_sensitivity: 0.35        # 0-1; lower = more sensitive to topic changes when detecting pseudo-sections
+max_upload_size_mb: 200              # uploads above this are rejected with 413 before processing starts
+progress_event_every_n_pages: 5      # how often ingest_progress events fire on long documents
+section_summary_max_words: 150       # hard cap on every generated section summary, at any recursion level
+section_summary_direct_word_limit: 3000  # sections at or below this word count get summarized in a single LLM call;
+                                          # above this, summarized hierarchically — see Phase 2.5.1

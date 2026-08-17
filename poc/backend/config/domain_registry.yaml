@@ -1,0 +1,17 @@
+- domain: financial
+  claim_type: statistical
+  evidence_source: internal_tables
+  verification_method: deterministic
+- domain: financial
+  claim_type: causal
+  evidence_source: internal_tables
+  verification_method: agent
+- domain: legal
+  claim_type: definitional
+  evidence_source: external
+  verification_method: agent
+- domain: general
+  claim_type: "*"
+  evidence_source: external
+  verification_method: agent
+  confidence_ceiling: 0.6            # general fallback never reports higher confidence than this

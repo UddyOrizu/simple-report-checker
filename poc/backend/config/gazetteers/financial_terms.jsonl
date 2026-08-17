@@ -1,0 +1,14 @@
+{"label": "FINANCIAL_TERM", "pattern": "EBITDA"}
+{"label": "FINANCIAL_TERM", "pattern": "constant currency"}
+{"label": "FINANCIAL_TERM", "pattern": "revenue"}
+{"label": "FINANCIAL_TERM", "pattern": "gross margin"}
+{"label": "FINANCIAL_TERM", "pattern": [{"LOWER": "yoy"}]}
+{"label": "FINANCIAL_TERM", "pattern": "year-over-year"}
+{"label": "FINANCIAL_TERM", "pattern": "quarter-over-quarter"}
+{"label": "FINANCIAL_TERM", "pattern": "cost of goods sold"}
+{"label": "FINANCIAL_TERM", "pattern": "operating income"}
+{"label": "FINANCIAL_TERM", "pattern": "free cash flow"}
+{"label": "FINANCIAL_TERM", "pattern": "working capital"}
+{"label": "FINANCIAL_TERM", "pattern": "net income"}
+{"label": "FINANCIAL_TERM", "pattern": "operating margin"}
+{"label": "FINANCIAL_TERM", "pattern": "capital expenditure"}

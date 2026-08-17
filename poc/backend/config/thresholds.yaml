@@ -1,0 +1,1 @@
+arithmetic_tolerance_pct: 0.5        # percentage-point tolerance for deterministic recompute vs stated figure
