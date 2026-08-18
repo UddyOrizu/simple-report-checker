@@ -1,9 +1,12 @@
 import statistics
 
-import fitz
+import pymupdf as fitz
 import pdfplumber
 
+from app.ingestion.parsers.ocr import ocr_page
+
 HEADING_SIZE_RATIO = 1.15  # a line whose font size is >= body_size * this ratio is treated as a heading
+PARAGRAPH_LINE_GAP_RATIO = 1.9  # gap/font_size below this merges a line into the previous element (line-wrap continuation, not a new paragraph)
 
 
 def get_page_char_count(pdf_path: str, page_number: int) -> int:
@@ -35,6 +38,35 @@ def _group_words_into_lines(words: list[dict]) -> list[dict]:
     return lines
 
 
+def _merge_lines_into_elements(lines: list[dict], heading_threshold: float) -> list[dict]:
+    """Merge consecutive lines that are the same type, the same font size, and close enough
+    together vertically into one element — a wrapped line within a single paragraph, not a real
+    paragraph/heading break. A type or size change, or a bigger gap, starts a new element."""
+    blocks: list[dict] = []
+    current = None
+
+    for line in lines:
+        el_type = "heading" if line["size"] >= heading_threshold else "paragraph"
+        if current is not None:
+            gap = line["top"] - current["last_top"]
+            same_block = (
+                el_type == current["type"]
+                and abs(line["size"] - current["size"]) < 0.5
+                and gap < current["size"] * PARAGRAPH_LINE_GAP_RATIO
+            )
+            if same_block:
+                current["texts"].append(line["text"])
+                current["last_top"] = line["top"]
+                continue
+            blocks.append(current)
+        current = {"type": el_type, "texts": [line["text"]], "top": line["top"], "last_top": line["top"], "size": line["size"]}
+
+    if current is not None:
+        blocks.append(current)
+
+    return [{"type": b["type"], "text": " ".join(b["texts"]), "top": b["top"]} for b in blocks]
+
+
 def parse_native_page(pdf_path: str, page_number: int) -> list[dict]:
     """Extract heading/paragraph/table elements from a single native-text PDF page, in document order."""
     with pdfplumber.open(pdf_path) as pdf:
@@ -51,10 +83,7 @@ def parse_native_page(pdf_path: str, page_number: int) -> list[dict]:
         body_size = statistics.median(w["size"] for w in words) if words else 11.0
         heading_threshold = body_size * HEADING_SIZE_RATIO
 
-        elements = []
-        for line in lines:
-            el_type = "heading" if line["size"] >= heading_threshold else "paragraph"
-            elements.append({"type": el_type, "text": line["text"], "top": line["top"], "page_number": page_number})
+        elements = [{**e, "page_number": page_number} for e in _merge_lines_into_elements(lines, heading_threshold)]
 
         for t in tables:
             elements.append(
@@ -67,12 +96,26 @@ def parse_native_page(pdf_path: str, page_number: int) -> list[dict]:
         return elements
 
 
-def parse_pdf(path: str, config: dict) -> list[dict]:
-    """Parse every page of a PDF, returning elements for native pages only.
+def parse_ocr_page(pdf_path: str, page_number: int) -> list[dict]:
+    """OCR a single non-native page, returning it as one paragraph element carrying its confidence."""
+    text, confidence = ocr_page(pdf_path, page_number)
+    return [
+        {
+            "type": "paragraph",
+            "text": text,
+            "page_number": page_number,
+            "source": "ocr",
+            "ocr_confidence": confidence,
+        }
+    ]
 
-    Pages that aren't native (char count at/below the configured threshold) are returned as
-    stub {"type": "scanned_page", "page_number": N} markers — the OCR fallback (Phase 2.3)
-    fills those in.
+
+def parse_pdf(path: str, config: dict) -> list[dict]:
+    """Parse every page of a PDF, in document order.
+
+    Native pages (char count above the configured threshold) go through the pdfplumber-based
+    layout parser; every other page is routed through OCR independently, so a document can mix
+    native and scanned pages freely.
     """
     with fitz.open(path) as doc:
         page_count = len(doc)
@@ -82,5 +125,5 @@ def parse_pdf(path: str, config: dict) -> list[dict]:
         if is_native_page(path, page_number, config):
             elements.extend(parse_native_page(path, page_number))
         else:
-            elements.append({"type": "scanned_page", "page_number": page_number})
+            elements.extend(parse_ocr_page(path, page_number))
     return elements

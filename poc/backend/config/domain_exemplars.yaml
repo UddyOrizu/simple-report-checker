@@ -1,0 +1,23 @@
+# Seeded exemplar sentences per domain, used by the semantic fallback tier in
+# app/nlp/domain_router.py when a claim has no structural hint and no gazetteer match.
+# Domains must match config/domain_registry.yaml's `domain` values.
+financial:
+  - "Revenue grew significantly this quarter due to strong sales."
+  - "Operating margin improved as costs declined year over year."
+  - "The company reported a rise in net income and free cash flow."
+  - "Gross profit exceeded expectations for the reporting period."
+  - "Capital expenditure increased to support new manufacturing capacity."
+
+legal:
+  - "The company complies with GDPR data protection requirements."
+  - "This agreement includes a standard indemnification clause."
+  - "A material weakness was identified in internal financial controls."
+  - "The contract is subject to force majeure provisions."
+  - "Regulatory compliance remains a top priority for the legal team."
+
+general:
+  - "The team celebrated a successful product launch this month."
+  - "Employees enjoyed the annual company retreat in the mountains."
+  - "The office relocated to a new building downtown last spring."
+  - "Customer feedback has been overwhelmingly positive lately."
+  - "The weather briefly affected our regional operations this week."

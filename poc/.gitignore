@@ -13,6 +13,7 @@ dist/
 .env
 storage/
 *.log
+backend/scripts/.run_snapshots/
 
 # OS
 .DS_Store

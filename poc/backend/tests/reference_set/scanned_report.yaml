@@ -1,0 +1,31 @@
+# Hand-checked ground truth for tests/fixtures/scanned_report.pdf.
+document: scanned_report.pdf
+description: >
+  Image-only (OCR-only) PDF — the only reference-set document with a genuinely external-scope
+  claim (GDPR is a regulatory standard the document itself has no reason to define).
+
+expected_claims:
+  - source_sentence: >
+      All departments must complete mandatory GDPR training by the end of this quarter.
+    claim_type: definitional
+    scope: external
+    domain: legal
+    expected_verdict: insufficient
+    expected_resolved_by: agent
+    notes: >
+      GDPR training completion needs a real external/regulatory source; the mock connector
+      always returns the same canned competitor-revenue snippet regardless of claim content, so
+      it can't actually address this claim — insufficient is the honest expected result, not a
+      limitation to paper over.
+
+  - source_sentence: >
+      Our top vendor by spend renewed its contract under the same indemnification terms as last
+      year.
+    claim_type: comparative
+    scope: internal
+    domain: legal
+    expected_verdict: insufficient
+    expected_resolved_by: agent
+    notes: >
+      "Same terms as last year" requires last year's contract terms for comparison — this
+      2-page document contains no prior-year data at all.

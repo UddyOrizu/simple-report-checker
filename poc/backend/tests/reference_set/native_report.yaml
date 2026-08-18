@@ -1,0 +1,46 @@
+# Hand-checked ground truth for tests/fixtures/native_report.pdf.
+document: native_report.pdf
+description: >
+  Same Example A content as sample_report.docx, but as a native-text (non-scanned) PDF —
+  validates the pdf_parser path produces the same claims as the docx path from equivalent text.
+
+expected_claims:
+  - source_sentence: >
+      Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline,
+      positioning us ahead of our closest competitor.
+    claim_type: statistical
+    scope: internal
+    domain: financial
+    expected_verdict: supported
+    expected_resolved_by: deterministic
+    notes: Identical figures to sample_report.docx — (112-100)/100 = 12%, matches stated 12%.
+
+  - source_sentence: >
+      Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline,
+      positioning us ahead of our closest competitor.
+    claim_type: causal
+    scope: internal
+    domain: financial
+    expected_verdict: insufficient
+    expected_resolved_by: agent
+    notes: No regional revenue breakdown table exists in this fixture either.
+
+  - source_sentence: >
+      Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline,
+      positioning us ahead of our closest competitor.
+    claim_type: causal
+    scope: internal
+    domain: financial
+    expected_verdict: insufficient
+    expected_resolved_by: agent
+    notes: No cost breakdown table exists.
+
+  - source_sentence: >
+      Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline,
+      positioning us ahead of our closest competitor.
+    claim_type: comparative
+    scope: both
+    domain: financial
+    expected_verdict: supported
+    expected_resolved_by: agent
+    notes: Same reasoning as sample_report.docx's equivalent claim.

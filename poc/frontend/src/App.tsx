@@ -1,8 +1,13 @@
+import { Route, Routes } from "react-router-dom"
+import { DocumentHistory } from "./pages/DocumentHistory"
+import { DocumentReview } from "./pages/DocumentReview"
+
 function App() {
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <p className="text-gray-500">Claim Checker — frontend scaffold ready.</p>
-    </div>
+    <Routes>
+      <Route path="/" element={<DocumentHistory />} />
+      <Route path="/documents/:documentId" element={<DocumentReview />} />
+    </Routes>
   )
 }
 

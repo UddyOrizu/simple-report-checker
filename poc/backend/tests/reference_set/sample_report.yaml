@@ -1,0 +1,61 @@
+# Hand-checked ground truth for tests/fixtures/sample_report.docx.
+document: sample_report.docx
+description: >
+  Contains Example A's canonical sentence verbatim under "Financial Highlights" (decomposes to
+  the four documented claims), plus a forward-looking Outlook paragraph.
+
+expected_claims:
+  - source_sentence: >
+      Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline,
+      positioning us ahead of our closest competitor.
+    claim_type: statistical
+    scope: internal
+    domain: financial
+    expected_verdict: supported
+    expected_resolved_by: deterministic
+    notes: (112-100)/100 = 12%, exactly matches the stated 12% — no LLM needed.
+
+  - source_sentence: >
+      Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline,
+      positioning us ahead of our closest competitor.
+    claim_type: causal
+    scope: internal
+    domain: financial
+    expected_verdict: insufficient
+    expected_resolved_by: agent
+    notes: >
+      No regional/APAC revenue breakdown exists anywhere in this document — only a total
+      current/prior revenue table — so the causal driver can't actually be verified from it.
+
+  - source_sentence: >
+      Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline,
+      positioning us ahead of our closest competitor.
+    claim_type: causal
+    scope: internal
+    domain: financial
+    expected_verdict: insufficient
+    expected_resolved_by: agent
+    notes: Same reasoning — no cost breakdown table exists to verify this driver either.
+
+  - source_sentence: >
+      Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline,
+      positioning us ahead of our closest competitor.
+    claim_type: comparative
+    scope: both
+    domain: financial
+    expected_verdict: supported
+    expected_resolved_by: agent
+    notes: >
+      Internal revenue growth (12%) vs. the mock connector's competitor figure (8% growth) —
+      12% > 8% supports "ahead of competitor" under a growth-rate reading. Judgment call for the
+      live agent; a reasonable model could instead call this insufficient if it reads "ahead of"
+      as requiring absolute revenue rather than growth rate — flag for review once a key is set.
+
+  - source_sentence: >
+      We expect continued momentum into the fourth quarter, subject to macroeconomic conditions.
+    claim_type: forward_looking
+    scope: internal
+    domain: financial
+    expected_verdict: insufficient
+    expected_resolved_by: agent
+    notes: Forward-looking guidance about the company's own future isn't a checkable present fact.

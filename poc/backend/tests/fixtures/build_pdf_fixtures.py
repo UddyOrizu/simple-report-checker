@@ -4,7 +4,7 @@ Run with `python build_pdf_fixtures.py`.
 
 import os
 
-import fitz
+import pymupdf as fitz
 from PIL import Image, ImageDraw, ImageFont
 
 FIXTURES_DIR = os.path.dirname(__file__)
@@ -227,9 +227,97 @@ def build_unstructured_essay():
     doc.close()
 
 
+_FILLER_SENTENCES = [
+    "Operational efficiency continued to improve as the team streamlined several internal processes.",
+    "Customer satisfaction scores remained stable across all regions this period.",
+    "The engineering team shipped several reliability improvements ahead of schedule.",
+    "Marketing spend was reallocated toward higher-performing channels mid-quarter.",
+    "Supply chain lead times normalized after last quarter's disruptions.",
+    "Headcount growth was modest, concentrated primarily in customer-facing roles.",
+    "A handful of long-standing vendor contracts were renegotiated on improved terms.",
+    "Employee retention held steady, with attrition below the prior-year average.",
+]
+
+
+def _filler_paragraph(seed: int) -> str:
+    return " ".join(_FILLER_SENTENCES[(seed + i) % len(_FILLER_SENTENCES)] for i in range(4))
+
+
+def build_large_report():
+    """80+ pages, mostly native text with a handful of scanned (image-only) pages mixed in, and
+    several headed sections — big enough that a naive synchronous OCR/parse loop would visibly
+    stall. Carries a claim on page 1 whose supporting table sits ~75 pages later in a different
+    section, on its own; Phase 5.1.1's cross-reference fallback depends on that far-apart pair.
+    """
+    doc = fitz.open()
+    scanned_pages = {15, 28, 41, 54, 67}
+
+    page = doc.new_page(width=PAGE_W, height=PAGE_H)
+    y = MARGIN
+    y = add_heading(page, y, "Annual Regional Performance Report")
+    add_paragraph(
+        page,
+        y,
+        "Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline, "
+        "as detailed in the Regional Performance Appendix.",
+    )
+
+    section_names = [
+        "Engineering Update", "Customer Success", "Marketing Overview", "Supply Chain Review",
+        "People & Culture", "Vendor Relations", "Product Roadmap", "Risk & Compliance",
+        "Infrastructure Notes", "Regional Operations",
+    ]
+    section_idx = 0
+
+    while len(doc) < 77:
+        current_page_number = len(doc) + 1
+
+        if current_page_number in scanned_pages:
+            # smaller than the other scanned fixtures' render size — this fixture needs 5 of
+            # these embedded, and full-res pages would make it needlessly heavy for a test asset
+            img = _render_scanned_page_image(
+                [f"Field Notes -- Page {current_page_number}", "", "Scanned appendix page with no embedded text layer."],
+                size=(850, 1100),
+            )
+            img_path = os.path.join(FIXTURES_DIR, "_tmp_large_scan.png")
+            img.save(img_path)
+            page = doc.new_page(width=PAGE_W, height=PAGE_H)
+            page.insert_image(fitz.Rect(0, 0, PAGE_W, PAGE_H), filename=img_path)
+            os.remove(img_path)
+            continue
+
+        page = doc.new_page(width=PAGE_W, height=PAGE_H)
+        y = MARGIN
+        if current_page_number % 6 == 0:
+            y = add_heading(page, y, section_names[section_idx % len(section_names)], size=13)
+            section_idx += 1
+        for i in range(3):
+            y = add_paragraph(page, y, _filler_paragraph(current_page_number * 3 + i))
+            if y > PAGE_H - MARGIN - 60:
+                break
+
+    page = doc.new_page(width=PAGE_W, height=PAGE_H)
+    y = MARGIN
+    y = add_heading(page, y, "Regional Performance Appendix")
+    y = add_paragraph(page, y, "The table below breaks out revenue by period for the APAC region.")
+    add_table(
+        page,
+        y,
+        [("Metric", "Value"), ("Revenue (current period)", "$112M"), ("Revenue (prior period)", "$100M")],
+    )
+
+    while len(doc) < 80:
+        page = doc.new_page(width=PAGE_W, height=PAGE_H)
+        add_paragraph(page, MARGIN, _filler_paragraph(len(doc)))
+
+    doc.save(os.path.join(FIXTURES_DIR, "large_report.pdf"))
+    doc.close()
+
+
 if __name__ == "__main__":
     build_native_report()
     build_scanned_report()
     build_mixed_report()
     build_unstructured_essay()
-    print("wrote native_report.pdf, scanned_report.pdf, mixed_report.pdf, unstructured_essay.pdf")
+    build_large_report()
+    print("wrote native_report.pdf, scanned_report.pdf, mixed_report.pdf, unstructured_essay.pdf, large_report.pdf")

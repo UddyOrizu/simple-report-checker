@@ -1,0 +1,17 @@
+# Hand-checked ground truth for tests/fixtures/short_memo.docx.
+document: short_memo.docx
+description: >
+  Short document (skips structural indexing entirely — has_structural_index=false) with a single
+  forward-looking internal claim.
+
+expected_claims:
+  - source_sentence: >
+      Quick update: the vendor contract renewal is on track for next month.
+    claim_type: forward_looking
+    scope: internal
+    domain: general
+    expected_verdict: insufficient
+    expected_resolved_by: agent
+    notes: >
+      A forward-looking status claim about an in-progress renewal isn't a checkable present
+      fact, and this memo contains no corroborating detail beyond the assertion itself.
