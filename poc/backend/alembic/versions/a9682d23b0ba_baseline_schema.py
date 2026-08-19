@@ -47,6 +47,7 @@ CREATE TABLE document_chunks (
   section_id      UUID REFERENCES document_sections(id),
   chunk_type      TEXT NOT NULL,
   chunk_text      TEXT NOT NULL,
+  embedding       VECTOR(1536) NOT NULL,
   context_capsule TEXT,
   page_number     INT,
   char_start      INT,
@@ -136,6 +137,8 @@ CREATE INDEX idx_verdicts_claim ON verdicts(claim_id);
 CREATE INDEX idx_pipeline_runs_document ON pipeline_runs(document_id, stage);
 CREATE INDEX idx_agent_traces_claim ON agent_traces(claim_id);
 CREATE INDEX idx_documents_created_at ON documents(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS document_chunks_embedding_idx ON document_chunks USING hnsw (embedding vector_cosine_ops);
 
 -- reserved for the future claim-cache dedup use of claims.embedding (see schema comment)
 CREATE INDEX idx_claims_embedding ON claims USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);

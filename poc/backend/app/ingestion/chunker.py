@@ -1,3 +1,6 @@
+from poc.backend.app.ingestion.sentence_level_chunker import EmbeddingService, chunk_sentences, split_sentences
+
+
 def _table_text(rows: list[list[str]]) -> str:
     return "\n".join(" | ".join(str(cell) for cell in row) for row in rows)
 
@@ -31,22 +34,28 @@ def chunk_document(elements: list[dict], document_title: str, state: dict | None
         state["offset"] = char_end + 1
         section_title = state["section_title"]
 
-        chunk = {
-            "element_index": element_index,
-            "chunk_type": el_type,
-            "chunk_text": text,
-            "context_capsule": (
-                f"{document_title} > {section_title}"
-                if section_title and section_title != document_title
-                else document_title
-            ),
-            "page_number": element.get("page_number"),
-            "char_start": char_start,
-            "char_end": char_end,
-        }
-        if "ocr_confidence" in element:
-            chunk["ocr_confidence"] = element["ocr_confidence"]
-        chunks.append(chunk)
+        sentences = split_sentences(text)
+        sentence_chunks = chunk_sentences(sentences)
+
+        for sentence_chunk in sentence_chunks:
+            
+            chunk = {
+                "element_index": element_index,
+                "chunk_type": el_type,
+                "chunk_text": sentence_chunk.text,
+                "context_capsule": (
+                    f"{document_title} > {section_title}"
+                    if section_title and section_title != document_title
+                    else document_title
+                ),
+                "page_number": element.get("page_number"),
+                "char_start": sentence_chunk.start_sentence_index,
+                "char_end": sentence_chunk.end_sentence_index,
+                "embedding": [],
+            }
+            if "ocr_confidence" in element:
+                chunk["ocr_confidence"] = element["ocr_confidence"]
+            chunks.append(chunk)
 
     return chunks
 

@@ -1,7 +1,11 @@
 import os
 
+import truststore
+from dotenv import load_dotenv
+
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
+from agno.tools.serper import SerperTools
 
 from app.agents.tools.citation_check import check_citation_fidelity_tool
 from app.agents.tools.internal_lookup import make_internal_lookup_tool
@@ -9,17 +13,22 @@ from app.agents.verifier import format_evidence_bundle
 from app.llm.client import MissingCredentialsError, load_prompt
 from app.schemas.verification import ChallengerResult, VerifierResult
 
-CHALLENGER_MODEL_ID = "claude-sonnet-5"
+truststore.inject_into_ssl()
+load_dotenv()
+
+CHALLENGER_MODEL_ID = "gpt-4o"
 _INSTRUCTIONS = load_prompt("challenger")
 
 
 def build_challenger_agent(session, claim) -> Agent:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise MissingCredentialsError("ANTHROPIC_API_KEY is not set — this pipeline stage is BLOCKED-CREDENTIALS")
-    tools = [check_citation_fidelity_tool]
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise MissingCredentialsError("OPENAI_API_KEY is not set — this pipeline stage is BLOCKED-CREDENTIALS")
+    tools = [check_citation_fidelity_tool, SerperTools()]
+    api_key = os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENAI_BASE_URL", "https://eu.api.openai.com/v1")
     if session is not None:
         tools.append(make_internal_lookup_tool(session, claim))
-    return Agent(model=Claude(id=CHALLENGER_MODEL_ID), output_schema=ChallengerResult, tools=tools, markdown=False)
+    return Agent(model=OpenAIChat(id=CHALLENGER_MODEL_ID, api_key=api_key, base_url=base_url), output_schema=ChallengerResult, tools=tools, markdown=False)
 
 
 async def run_challenger(

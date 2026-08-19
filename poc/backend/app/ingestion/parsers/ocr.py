@@ -10,3 +10,4 @@ def ocr_page(pdf_path: str, page_number: int) -> tuple[str, float]:
     confidences = [c for c in data["conf"] if c != -1]
     avg_confidence = sum(confidences) / len(confidences) if confidences else 0
     return text, avg_confidence / 100
+

@@ -1,10 +1,15 @@
 import uuid
+import truststore
+from dotenv import load_dotenv
 
 from pydantic import BaseModel
 
 from app.llm.client import llm_call_structured, load_prompt
 
-NAVIGATOR_MODEL_ID = "claude-sonnet-5"
+truststore.inject_into_ssl()
+load_dotenv()
+
+NAVIGATOR_MODEL_ID = "gpt-4o-mini"
 
 _PROMPT_TEMPLATE = load_prompt("navigator")
 

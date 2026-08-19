@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import Float, ForeignKey, Integer, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
+from pgvector.sqlalchemy import Vector
 
 from app.models.base import Base
 
@@ -22,3 +23,4 @@ class DocumentChunk(Base):
     char_start: Mapped[int | None] = mapped_column(Integer)
     char_end: Mapped[int | None] = mapped_column(Integer)
     ocr_confidence: Mapped[float | None] = mapped_column(Float)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))

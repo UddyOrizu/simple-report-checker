@@ -6,6 +6,9 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 from app.models import Base
 
+from dotenv import load_dotenv
+load_dotenv()
+
 config = context.config
 
 if config.config_file_name is not None:
@@ -13,7 +16,7 @@ if config.config_file_name is not None:
 
 
 def _sync_db_url() -> str:
-    url = os.environ.get("DATABASE_URL", "postgresql+psycopg2://poc:poc@localhost:5433/claim_checker")
+    url = os.environ.get("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres")
     return url.replace("+asyncpg", "+psycopg2")
 
 

@@ -1,13 +1,20 @@
 import os
 
+import truststore
+from dotenv import load_dotenv
+
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
+from agno.tools.serper import SerperTools
 
 from app.agents.tools.internal_lookup import make_internal_lookup_tool
 from app.llm.client import MissingCredentialsError, load_prompt
 from app.schemas.verification import VerifierResult
 
-VERIFIER_MODEL_ID = "claude-sonnet-5"
+truststore.inject_into_ssl()
+load_dotenv()
+
+VERIFIER_MODEL_ID = "gpt-4o"
 _INSTRUCTIONS = load_prompt("verifier")
 
 
@@ -18,7 +25,9 @@ def build_verifier_agent(session, claim) -> Agent:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise MissingCredentialsError("ANTHROPIC_API_KEY is not set — this pipeline stage is BLOCKED-CREDENTIALS")
     tools = [make_internal_lookup_tool(session, claim)] if session is not None else []
-    return Agent(model=Claude(id=VERIFIER_MODEL_ID), output_schema=VerifierResult, tools=tools, markdown=False)
+    api_key = os.getenv("OPENAI_API_KEY")
+    base_url = os.getenv("OPENAI_BASE_URL", "https://eu.api.openai.com/v1")
+    return Agent(model=OpenAIChat(id=VERIFIER_MODEL_ID, api_key=api_key, base_url=base_url), output_schema=VerifierResult, tools=tools, markdown=False)
 
 
 def format_evidence_bundle(evidence: list) -> str:

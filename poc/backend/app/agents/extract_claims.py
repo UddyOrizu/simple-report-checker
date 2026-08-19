@@ -56,6 +56,7 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
                     continue
                 try:
                     claim_list = await decompose_sentence(sentence, chunk.context_capsule)
+                    print(f"Decomposed sentence into {len(claim_list.claims)} claims: {claim_list.claims}")
                     extracted = [c.model_dump() for c in claim_list.claims]
                 except MissingCredentialsError:
                     llm_blocked = True

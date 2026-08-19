@@ -64,6 +64,8 @@ is reachable at `localhost:5433` — that's why the two `DATABASE_URL` values ab
 host/port.
 
 ## Database
+https://pdf2image.readthedocs.io/en/latest/installation.html
+
 
 Postgres runs via Docker Compose (`pgvector/pgvector:pg16`, port `5433` on the host). Schema
 migrations use Alembic:

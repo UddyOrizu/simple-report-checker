@@ -8,6 +8,7 @@ from app.events.broadcaster import broadcaster
 from app.ingestion.chunker import chunk_document
 from app.ingestion.parsers.pdf_parser import is_native_page, parse_native_page, parse_ocr_page
 from app.models import DocumentChunk, ExtractedTable
+from poc.backend.app.ingestion.sentence_level_chunker import EmbeddingService
 
 
 async def process_page(pdf_path: str, page_number: int, config: dict) -> list[dict]:
@@ -32,7 +33,7 @@ async def process_large_pdf(document_id: uuid.UUID, pdf_path: str, document_titl
     chunk_state: dict = {"section_title": None, "offset": 0}
     total_chunks = 0
     total_tables = 0
-
+    embedding_service = EmbeddingService()
     for page_number in range(1, page_count + 1):
         elements = await process_page(pdf_path, page_number, config)
         chunks = chunk_document(elements, document_title=document_title, state=chunk_state)
@@ -40,6 +41,7 @@ async def process_large_pdf(document_id: uuid.UUID, pdf_path: str, document_titl
         async with async_session() as session:
             for chunk in chunks:
                 element = elements[chunk["element_index"]]
+                embedding = await embedding_service.embed_text(chunk["chunk_text"])
                 session.add(
                     DocumentChunk(
                         document_id=document_id,
@@ -50,6 +52,7 @@ async def process_large_pdf(document_id: uuid.UUID, pdf_path: str, document_titl
                         char_start=chunk["char_start"],
                         char_end=chunk["char_end"],
                         ocr_confidence=chunk.get("ocr_confidence"),
+                        embedding=embedding,
                     )
                 )
                 total_chunks += 1

@@ -2,13 +2,20 @@ import os
 from functools import lru_cache
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
 from pydantic import BaseModel
 
-DEFAULT_MODEL_ID = "claude-haiku-4-5-20251001"
+import truststore
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DEFAULT_MODEL_ID = "gpt-4o"
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "prompts")
 
+api_key = os.getenv("OPENAI_API_KEY")
+base_url = os.getenv("OPENAI_BASE_URL", "https://eu.api.openai.com/v1")
 
 class MissingCredentialsError(RuntimeError):
     """Raised when an LLM-backed pipeline stage runs without ANTHROPIC_API_KEY set.
@@ -20,12 +27,11 @@ class MissingCredentialsError(RuntimeError):
 
 @lru_cache(maxsize=None)
 def _agent(model_id: str, output_schema: type[BaseModel] | None = None) -> Agent:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not os.environ.get("OPENAI_API_KEY"):
         raise MissingCredentialsError(
-            "ANTHROPIC_API_KEY is not set — this pipeline stage is BLOCKED-CREDENTIALS"
+            "OPENAI_API_KEY is not set — this pipeline stage is BLOCKED-CREDENTIALS"
         )
-    return Agent(model=Claude(id=model_id), markdown=False, output_schema=output_schema)
-
+    return Agent(model=OpenAIChat(id=model_id, api_key=api_key, base_url=base_url), markdown=False, output_schema=output_schema)
 
 async def llm_call(prompt: str, model_id: str = DEFAULT_MODEL_ID) -> str:
     response = await _agent(model_id).arun(prompt)

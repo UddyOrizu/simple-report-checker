@@ -1,3 +1,5 @@
+from typing import List, Optional, Tuple
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,3 +60,39 @@ async def lookup_internal_evidence(session: AsyncSession, claim: Claim) -> list[
             )
 
     return evidence
+
+
+
+async def query_similar(
+    self,
+    document_id: str,
+    query_embedding: List[float],
+    top_k: int = 5,
+    exclude_chunk_range: Optional[Tuple[int, int]] = None,
+) -> List[dict]:
+    """
+    Cosine-similarity search scoped to a single document. `exclude_chunk_range`
+    (min_chunk_index, max_chunk_index) lets the In-Doc Verifier exclude the
+    chunk(s) a claim was originally extracted from, so a claim isn't
+    "verified" against its own source sentence.
+    """
+    vector_literal = "[" + ",".join(str(x) for x in query_embedding) + "]"
+    exclude_min, exclude_max = exclude_chunk_range if exclude_chunk_range else (None, None)
+    async with self.pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT chunk_index, text, start_sentence_index, end_sentence_index, page,
+                    1 - (embedding <=> $1::vector) AS similarity
+            FROM document_chunks
+            WHERE document_id = $2
+                AND ($3::int IS NULL OR chunk_index < $3 OR chunk_index > $4)
+            ORDER BY embedding <=> $1::vector
+            LIMIT $5
+            """,
+            vector_literal,
+            document_id,
+            exclude_min,
+            exclude_max,
+            top_k,
+        )
+    return [dict(r) for r in rows]
