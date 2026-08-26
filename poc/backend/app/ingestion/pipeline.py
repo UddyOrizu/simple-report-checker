@@ -93,8 +93,9 @@ async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict
 
     embedding_service = EmbeddingService()
 
-    for chunk in chunks:
-        chunk["embedding"] = await embedding_service.embed_text(chunk["chunk_text"])
+    embeddings = await embedding_service.embed_texts([c["chunk_text"] for c in chunks])
+    for chunk, embedding in zip(chunks, embeddings):
+        chunk["embedding"] = embedding
 
     summary_trace: dict[int, list[dict]] = {}
     llm_blocked = False
@@ -232,16 +233,21 @@ async def _persist(
         return str(pipeline_run.id)
 
 
-async def finalize_pdf_structure(document_id: uuid.UUID, path: str, page_count: int, config: dict) -> None:
+async def finalize_pdf_structure(
+    document_id: uuid.UUID, path: str, page_count: int, config: dict, elements: list[dict] | None = None
+) -> None:
     """Runs structural indexing + section summarization for a PDF already ingested via
-    large_file.py's page-by-page path (Phase 2.7) — that path stays memory-bounded by never
-    holding the whole document's elements at once, so it can't build the structural index
-    inline the way the whole-document pipeline above does. Re-parses the file (a second pass,
-    not free, but the deterministic parsing itself is fast — the point of the page-by-page path
-    was bounding memory and offloading OCR, not avoiding a second parse) to get elements once
-    more, builds sections, and re-links the already-persisted chunks/tables to them by page
-    range. Finally marks the document ingested."""
-    elements = parse_pdf(path, config)
+    large_file.py's page-by-page path (Phase 2.7). `elements` should normally be the list
+    process_large_pdf already accumulated while parsing/OCRing page-by-page — passing it through
+    avoids a second full pass over the file, which for a scanned document would otherwise mean
+    re-running OCR (the single most expensive step) on every non-native page a second time.
+    Falls back to re-parsing from `path` when `elements` isn't supplied, for standalone callers
+    that only have a page_count and a file path.
+
+    Builds sections from `elements` and re-links the already-persisted chunks/tables to them by
+    page range, then marks the document ingested."""
+    if elements is None:
+        elements = parse_pdf(path, config)
     sections = build_structural_index(page_count, elements, config)
 
     async with async_session() as session:

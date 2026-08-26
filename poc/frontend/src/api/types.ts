@@ -20,6 +20,7 @@ export interface DocumentSummary {
   has_structural_index: boolean;
   created_at: string;
   claim_summary: ClaimSummary;
+  severity_summary: Partial<Record<Severity, number>>;
 }
 
 export interface DocumentDetail {
@@ -79,6 +80,11 @@ export interface AgentTraceItem {
   created_at: string;
 }
 
+export interface ClaimEntity {
+  text: string;
+  label: string;
+}
+
 export interface ClaimDetail {
   id: string;
   document_id: string;
@@ -90,6 +96,11 @@ export interface ClaimDetail {
   domain: string | null;
   domain_confidence: number | null;
   domain_source: string | null;
+  entities: ClaimEntity[];
+  routing_decision: string | null;
+  suggested_search_queries: string[];
+  cites_external_source: boolean;
+  is_opinion_or_unverifiable: boolean;
   verdict: VerdictDetail | null;
   evidence: EvidenceItem[];
   traces: AgentTraceItem[];

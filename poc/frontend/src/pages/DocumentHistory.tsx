@@ -3,8 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { listDocuments } from "../api/client";
 import { DocumentUpload } from "../components/DocumentUpload";
-import { STATUS_STYLES, VERDICT_STYLES } from "../components/verdictColors";
-import type { Verdict } from "../api/types";
+import { SEVERITY_STYLES, STATUS_STYLES, VERDICT_STYLES } from "../components/verdictColors";
+import type { Severity, Verdict } from "../api/types";
+
+// Reviewer triage priority: a document buried under fifty "supported" claims but with one
+// "critical" is exactly the one that needs attention first — surface severity, not just verdict
+// counts, and only the severities worth a glance (info is the routine case, not worth a badge).
+const NOTABLE_SEVERITIES: Severity[] = ["critical", "major", "minor"];
 
 const PAGE_SIZE = 20;
 
@@ -59,6 +64,7 @@ export function DocumentHistory() {
               <th>Uploaded</th>
               <th>Status</th>
               <th>Pages</th>
+              <th>Severity</th>
               <th>Claims</th>
             </tr>
           </thead>
@@ -66,8 +72,17 @@ export function DocumentHistory() {
             {documents.map((doc) => (
               <tr
                 key={doc.id}
-                className="border-b hover:bg-gray-50 cursor-pointer"
+                tabIndex={0}
+                role="link"
+                aria-label={`Open ${doc.filename}`}
+                className="border-b hover:bg-gray-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
                 onClick={() => navigate(`/documents/${doc.id}`)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate(`/documents/${doc.id}`);
+                  }
+                }}
               >
                 <td className="py-2">{doc.filename}</td>
                 <td>{new Date(doc.created_at).toLocaleString()}</td>
@@ -77,6 +92,15 @@ export function DocumentHistory() {
                   </span>
                 </td>
                 <td>{doc.page_count ?? "—"}</td>
+                <td>
+                  <div className="flex gap-1 flex-wrap">
+                    {NOTABLE_SEVERITIES.filter((s) => doc.severity_summary[s]).map((severity) => (
+                      <span key={severity} className={`text-xs rounded px-1.5 py-0.5 ${SEVERITY_STYLES[severity]}`}>
+                        {doc.severity_summary[severity]} {severity}
+                      </span>
+                    ))}
+                  </div>
+                </td>
                 <td>
                   <div className="flex gap-1 flex-wrap">
                     {Object.entries(doc.claim_summary).map(([verdict, count]) => (

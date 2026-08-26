@@ -26,6 +26,12 @@ RULES FOR DECOMPOSITION:
 7. Every claim needs a `source_span` locator (page/paragraph/section) so the
    verifier and the final report can point back to exactly where this came from.
 8. Set `requires` to a short list of what's needed to verify said claim.
+9. The input below may be a table row instead of a prose sentence (e.g.
+   "Revenue (current period) | $112M"). Extract each distinct cell-value fact
+   from it the same way you would a sentence.
+10. `<Context>` may include a "Preceding sentence" line. That line is ONLY for
+   resolving pronouns/references in the target sentence (e.g. what "this
+   figure" or "that increase" refers to) — never extract a claim from it.
 
 You are NOT verifying anything at this stage. Do not assess truth. Only extract
 and structure.Do not invent claims the sentence does not make. Do not skip a claim bundled into a longer sentence.

@@ -29,14 +29,16 @@ async def take_snapshot(document_id: uuid.UUID, thresholds: dict, registry: list
         results = []
         for claim in claims:
             outcome = await verify_claim(session, claim, config={}, thresholds=thresholds, registry=registry)
+            if outcome is None:
+                continue
             results.append(
                 {
                     "claim_id": str(claim.id),
                     "claim_text": claim.claim_text,
                     "domain": claim.domain,
                     "scope": claim.scope,
-                    "verdict": outcome["verifier"]["final_verdict"],
-                    "confidence": outcome["verifier"].get("final_confidence"),
+                    "verdict": outcome["reconciled"]["final_verdict"],
+                    "confidence": outcome["reconciled"]["final_confidence"],
                 }
             )
 

@@ -1,7 +1,6 @@
+import asyncio
 import logging
 import os
-from unittest import result
-from unittest import result
 import uuid
 
 import yaml
@@ -19,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config")
 
+# Bounded fan-out for per-claim verification — each claim gets its own AsyncSession (required
+# for true concurrency; SQLAlchemy sessions aren't safe to share across concurrent coroutines),
+# capped so a large document's hundreds of claims don't open hundreds of connections/agent runs
+# at once.
+VERIFICATION_CONCURRENCY = 4
+
 
 def _load_yaml(name: str):
     with open(os.path.join(CONFIG_DIR, name)) as f:
@@ -32,7 +37,7 @@ async def _ingest(document_id: uuid.UUID, path: str, config: dict) -> None:
     python-docx has no per-page concept to stream over in the first place."""
     if path.lower().endswith(".pdf"):
         result = await process_large_pdf(document_id, path, os.path.basename(path), config)
-        await finalize_pdf_structure(document_id, path, result["page_count"], config)
+        await finalize_pdf_structure(document_id, path, result["page_count"], config, elements=result["elements"])
     else:
         await run_ingestion(document_id, path, config)
         await broadcaster.publish(document_id, {"event": "ingest_complete"})
@@ -60,33 +65,34 @@ async def process_document(document_id: uuid.UUID, path: str) -> None:
     async with async_session() as session:
         claims = await extract_claims_for_document(session, document_id, registry)
 
-    for claim_stub in claims:
+    semaphore = asyncio.Semaphore(VERIFICATION_CONCURRENCY)
+
+    async def _verify_one(claim_stub: Claim) -> None:
         async with async_session() as session:
             claim = await session.get(Claim, claim_stub.id)
             try:
-                result = await verify_claim(session, claim, config={}, thresholds=thresholds, registry=registry)
+                async with semaphore:
+                    result = await verify_claim(session, claim, config={}, thresholds=thresholds, registry=registry)
             except MissingCredentialsError:
-                continue
-
-            print(f"Claim {claim.id} verification result: {result}")
+                return
 
             final_verdict = None
+            severity = None
+            if result and result.get("reconciled"):
+                final_verdict = result["reconciled"]["final_verdict"]
+                severity = result["reconciled"]["severity"]
 
-            if result and result.get("verifier"):
-                final_verdict = result["verifier"].final_verdict
-
-            severity = result.get("severity") if result else None
-
-            
             await broadcaster.publish(
                 document_id,
                 {
                     "event": "claim_verified",
                     "claim_id": str(claim.id),
-                    "final_verdict":final_verdict,
+                    "final_verdict": final_verdict,
                     "severity": severity,
                 },
             )
+
+    await asyncio.gather(*(_verify_one(claim_stub) for claim_stub in claims))
 
     async with async_session() as session:
         document = await session.get(Document, document_id)

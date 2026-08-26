@@ -8,7 +8,7 @@ import spacy
 import tiktoken
 from openai import AsyncOpenAI
 
-from app.nlp.spacy_pipeline import get_nlp
+from app.nlp.spacy_pipeline import get_sentencizer_nlp
 
 
 # ----------------------------------------------------------------------------
@@ -30,7 +30,7 @@ EXTRACTION_WINDOW_OVERLAP_CHUNKS = 1  # embedding-chunks of overlap between extr
 CLAIM_DEDUP_SIMILARITY_THRESHOLD = 0.92  # cosine similarity above which two claims are treated as duplicates
 
 _tokenizer = tiktoken.get_encoding("cl100k_base")
-_nlp = get_nlp()  # sentence boundaries only
+_nlp = get_sentencizer_nlp()  # sentence boundaries only — no need for the full trf pipeline here
 
 
 def count_tokens(text: str) -> int:
@@ -203,8 +203,22 @@ class EmbeddingService:
                 delay *= 2  # exponential backoff
 
     async def embed_text(self, text: str) -> List[float]:
-        """Single-text embedding — used to embed a claim at routing/query time."""
+        """Single-text embedding — used to embed one claim at routing/query time, where a
+        standalone lookup embedding is genuinely needed on its own. For embedding many texts at
+        once (a document's chunks, a batch of extracted claims), use embed_texts instead — one
+        HTTP round trip per batch instead of one per text."""
         text = _guard_token_limit(text)
         response = await self.client.embeddings.create(model=self.model, input=[text])
         return response.data[0].embedding
+
+    async def embed_texts(self, texts: List[str], max_concurrency: int = 4) -> List[List[float]]:
+        """Batched embedding for a list of plain strings, in original order. Thin wrapper around
+        embed_chunks (which already implements token-aware batching, bounded concurrency, and
+        retry-with-backoff) for callers that just have raw text, not Chunk dataclasses — document
+        ingestion's chunk list and a document's extracted claims are both this shape."""
+        if not texts:
+            return []
+        wrapped = [Chunk(chunk_index=i, text=t, start_sentence_index=0, end_sentence_index=0) for i, t in enumerate(texts)]
+        await self.embed_chunks(wrapped, max_concurrency=max_concurrency)
+        return [c.embedding for c in wrapped]
 

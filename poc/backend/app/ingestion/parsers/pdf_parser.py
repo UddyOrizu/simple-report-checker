@@ -9,14 +9,18 @@ HEADING_SIZE_RATIO = 1.15  # a line whose font size is >= body_size * this ratio
 PARAGRAPH_LINE_GAP_RATIO = 1.9  # gap/font_size below this merges a line into the previous element (line-wrap continuation, not a new paragraph)
 
 
-def get_page_char_count(pdf_path: str, page_number: int) -> int:
-    with fitz.open(pdf_path) as doc:
-        page = doc[page_number - 1]
-        return len(page.get_text().strip())
+def get_page_char_count(pdf_path: str, page_number: int, doc: "fitz.Document | None" = None) -> int:
+    """`doc` (optional): an already-open fitz.Document, so a caller processing every page of a
+    document doesn't reopen (and re-parse the xref table of) the whole PDF file once per page.
+    Opens its own handle when omitted, for standalone callers."""
+    if doc is not None:
+        return len(doc[page_number - 1].get_text().strip())
+    with fitz.open(pdf_path) as opened:
+        return len(opened[page_number - 1].get_text().strip())
 
 
-def is_native_page(pdf_path: str, page_number: int, config: dict) -> bool:
-    return get_page_char_count(pdf_path, page_number) > config["native_text_char_threshold"]
+def is_native_page(pdf_path: str, page_number: int, config: dict, doc: "fitz.Document | None" = None) -> bool:
+    return get_page_char_count(pdf_path, page_number, doc=doc) > config["native_text_char_threshold"]
 
 
 def _bbox_contains(bbox, x, y) -> bool:
@@ -67,33 +71,40 @@ def _merge_lines_into_elements(lines: list[dict], heading_threshold: float) -> l
     return [{"type": b["type"], "text": " ".join(b["texts"]), "top": b["top"]} for b in blocks]
 
 
-def parse_native_page(pdf_path: str, page_number: int) -> list[dict]:
-    """Extract heading/paragraph/table elements from a single native-text PDF page, in document order."""
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[page_number - 1]
-        tables = page.find_tables()
-        words = page.extract_words(extra_attrs=["size"])
+def _extract_native_page(page, page_number: int) -> list[dict]:
+    tables = page.find_tables()
+    words = page.extract_words(extra_attrs=["size"])
 
-        # words that fall inside a table's bbox are already represented by the table element
-        non_table_words = [
-            w for w in words if not any(_bbox_contains(t.bbox, w["x0"], w["top"]) for t in tables)
-        ]
-        lines = _group_words_into_lines(non_table_words)
+    # words that fall inside a table's bbox are already represented by the table element
+    non_table_words = [
+        w for w in words if not any(_bbox_contains(t.bbox, w["x0"], w["top"]) for t in tables)
+    ]
+    lines = _group_words_into_lines(non_table_words)
 
-        body_size = statistics.median(w["size"] for w in words) if words else 11.0
-        heading_threshold = body_size * HEADING_SIZE_RATIO
+    body_size = statistics.median(w["size"] for w in words) if words else 11.0
+    heading_threshold = body_size * HEADING_SIZE_RATIO
 
-        elements = [{**e, "page_number": page_number} for e in _merge_lines_into_elements(lines, heading_threshold)]
+    elements = [{**e, "page_number": page_number} for e in _merge_lines_into_elements(lines, heading_threshold)]
 
-        for t in tables:
-            elements.append(
-                {"type": "table", "data": t.extract(), "top": t.bbox[1], "page_number": page_number}
-            )
+    for t in tables:
+        elements.append(
+            {"type": "table", "data": t.extract(), "top": t.bbox[1], "page_number": page_number}
+        )
 
-        elements.sort(key=lambda e: e["top"])
-        for e in elements:
-            e.pop("top")
-        return elements
+    elements.sort(key=lambda e: e["top"])
+    for e in elements:
+        e.pop("top")
+    return elements
+
+
+def parse_native_page(pdf_path: str, page_number: int, pdf: "pdfplumber.PDF | None" = None) -> list[dict]:
+    """Extract heading/paragraph/table elements from a single native-text PDF page, in document
+    order. `pdf` (optional): an already-open pdfplumber.PDF, so a per-page caller doesn't reopen
+    (and re-parse) the whole file on every page."""
+    if pdf is not None:
+        return _extract_native_page(pdf.pages[page_number - 1], page_number)
+    with pdfplumber.open(pdf_path) as opened:
+        return _extract_native_page(opened.pages[page_number - 1], page_number)
 
 
 def parse_ocr_page(pdf_path: str, page_number: int) -> list[dict]:
@@ -116,14 +127,17 @@ def parse_pdf(path: str, config: dict) -> list[dict]:
     Native pages (char count above the configured threshold) go through the pdfplumber-based
     layout parser; every other page is routed through OCR independently, so a document can mix
     native and scanned pages freely.
-    """
-    with fitz.open(path) as doc:
-        page_count = len(doc)
 
+    Opens the file once (via fitz for the native/OCR decision, via pdfplumber for native-page
+    extraction) and reuses both handles across every page, rather than reopening — and
+    re-parsing the file's xref table — once per page.
+    """
     elements = []
-    for page_number in range(1, page_count + 1):
-        if is_native_page(path, page_number, config):
-            elements.extend(parse_native_page(path, page_number))
-        else:
-            elements.extend(parse_ocr_page(path, page_number))
+    with fitz.open(path) as doc, pdfplumber.open(path) as pdf:
+        page_count = len(doc)
+        for page_number in range(1, page_count + 1):
+            if is_native_page(path, page_number, config, doc=doc):
+                elements.extend(parse_native_page(path, page_number, pdf=pdf))
+            else:
+                elements.extend(parse_ocr_page(path, page_number))
     return elements

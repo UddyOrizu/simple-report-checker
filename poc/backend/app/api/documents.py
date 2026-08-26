@@ -103,7 +103,16 @@ async def list_documents(limit: int = 20, offset: int = 0, status: str | None = 
                 .group_by(Verdict.final_verdict)
             )
             claim_summary = {verdict: count for verdict, count in (await session.execute(summary_stmt)).all()}
-            results.append({**_document_dict(document), "claim_summary": claim_summary})
+
+            severity_stmt = (
+                select(Verdict.severity, func.count())
+                .join(Claim, Claim.id == Verdict.claim_id)
+                .where(Claim.document_id == document.id)
+                .group_by(Verdict.severity)
+            )
+            severity_summary = {severity: count for severity, count in (await session.execute(severity_stmt)).all()}
+
+            results.append({**_document_dict(document), "claim_summary": claim_summary, "severity_summary": severity_summary})
         return results
 
 

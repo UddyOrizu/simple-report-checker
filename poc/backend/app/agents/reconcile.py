@@ -4,9 +4,9 @@ from app.schemas.verification import ChallengerResult, VerifierResult
 def derive_severity(final_verdict: str, claim_domain: str | None) -> str:
     if final_verdict == "contradicted":
         return "critical" if claim_domain == "financial" else "major"
-    if final_verdict == "unverifiable":
+    if final_verdict in ("unverifiable", "disputed"):
         return "major"
-    if final_verdict == "partially_supported":
+    if final_verdict in ("partially_supported", "insufficient"):
         return "minor"
     if final_verdict == "supported":
         return "info"
