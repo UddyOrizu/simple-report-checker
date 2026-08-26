@@ -22,6 +22,7 @@ from app.ingestion.section_summarizer import generate_all_section_summaries
 from app.ingestion.structural_index import build_structural_index
 from app.llm.client import MissingCredentialsError
 from app.models import Document, DocumentChunk, DocumentSection, ExtractedTable, PipelineRun
+from app.ingestion.sentence_level_chunker import EmbeddingService
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "ingestion.yaml")
 
@@ -90,6 +91,11 @@ async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict
     chunks = chunk_document(elements, document_title=title)
     sections = build_structural_index(page_count, elements, config)
 
+    embedding_service = EmbeddingService()
+
+    for chunk in chunks:
+        chunk["embedding"] = await embedding_service.embed_text(chunk["chunk_text"])
+
     summary_trace: dict[int, list[dict]] = {}
     llm_blocked = False
     if sections:
@@ -106,6 +112,7 @@ async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict
                 section["summary_method"] = "blocked_credentials" if llm_blocked else None
 
     duration_ms = int((time.monotonic() - start) * 1000)
+
 
     pipeline_run_id = await _persist(
         document_id, path, file_type, page_count, config, elements, chunks, sections, summary_trace, duration_ms
@@ -187,6 +194,7 @@ async def _persist(
                     char_start=chunk["char_start"],
                     char_end=chunk["char_end"],
                     ocr_confidence=chunk.get("ocr_confidence"),
+                    embedding=chunk["embedding"],
                 )
             )
             if chunk["chunk_type"] == "table":

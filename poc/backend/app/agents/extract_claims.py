@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 import uuid
 
@@ -12,6 +13,8 @@ from app.models import Claim, DocumentChunk, DocumentSection
 from app.nlp.clause_filter import needs_decomposition
 from app.nlp.domain_router import classify_domain
 from app.nlp.spacy_pipeline import get_nlp
+from app.agents.router import route_claim
+from app.ingestion.sentence_level_chunker import EmbeddingService
 
 
 def split_sentences(text: str) -> list[str]:
@@ -46,37 +49,47 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
     persisted: list[Claim] = []
     llm_blocked = False
 
+    embedding_service = EmbeddingService()
+    
+
+
     for chunk in chunks:
         section = await session.get(DocumentSection, chunk.section_id) if chunk.section_id else None
 
         sentences = await asyncio.to_thread(split_sentences, chunk.chunk_text)
-        for sentence in sentences:
-            if await asyncio.to_thread(needs_decomposition, sentence):
-                if llm_blocked:
-                    continue
-                try:
-                    claim_list = await decompose_sentence(sentence, chunk.context_capsule)
-                    print(f"Decomposed sentence into {len(claim_list.claims)} claims: {claim_list.claims}")
-                    extracted = [c.model_dump() for c in claim_list.claims]
-                except MissingCredentialsError:
-                    llm_blocked = True
-                    continue
-            else:
-                extracted = [direct_claim(sentence)]
+        for sentence in sentences:            
+            try:
+                claim_list = await decompose_sentence(sentence, chunk.context_capsule)
+                print(f"Decomposed sentence into {len(claim_list.claims)} claims: {claim_list.claims}")
+                extracted = [c.model_dump() for c in claim_list.claims]
+            except MissingCredentialsError:
+                llm_blocked = True
+                continue
+            
 
             for claim_data in extracted:
                 domain_result = await asyncio.to_thread(classify_domain, claim_data["text"], section, registry)
+                claim_route = await route_claim(claim_data["text"], f"{ json.dumps(claim_data, indent=4)} domain: {domain_result['domain']} domain confidence: {domain_result['confidence']} domain source: {domain_result['source']}")
+
+                claim_embedding =  await embedding_service.embed_text(claim_data["text"])
+
                 claim = Claim(
                     document_id=document_id,
                     chunk_id=chunk.id,
                     claim_text=claim_data["text"],
                     source_span=claim_data["source_span"],
                     claim_type=claim_data["claim_type"],
-                    scope=claim_data["scope"],
+                    scope=claim_route.route,
                     requires=claim_data["requires"],
                     domain=domain_result["domain"],
                     domain_confidence=domain_result["confidence"],
                     domain_source=domain_result["source"],
+                    cites_external_source=claim_data.get("cites_external_source", False),
+                    is_opinion_or_unverifiable=claim_data.get("is_opinion_or_unverifiable", False),
+                    routing_decision=claim_route.reasoning,
+                    suggested_search_queries=claim_data.get("suggested_search_queries", []),
+                    entities=claim_data.get("entities", []),
+                    embedding=claim_embedding
                 )
                 session.add(claim)
                 await session.flush()

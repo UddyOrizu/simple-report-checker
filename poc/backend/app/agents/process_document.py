@@ -1,5 +1,7 @@
 import logging
 import os
+from unittest import result
+from unittest import result
 import uuid
 
 import yaml
@@ -65,13 +67,24 @@ async def process_document(document_id: uuid.UUID, path: str) -> None:
                 result = await verify_claim(session, claim, config={}, thresholds=thresholds, registry=registry)
             except MissingCredentialsError:
                 continue
+
+            print(f"Claim {claim.id} verification result: {result}")
+
+            final_verdict = None
+
+            if result and result.get("verifier"):
+                final_verdict = result["verifier"].final_verdict
+
+            severity = result.get("severity") if result else None
+
+            
             await broadcaster.publish(
                 document_id,
                 {
                     "event": "claim_verified",
                     "claim_id": str(claim.id),
-                    "final_verdict": result["reconciled"]["final_verdict"],
-                    "severity": result["reconciled"]["severity"],
+                    "final_verdict":final_verdict,
+                    "severity": severity,
                 },
             )
 

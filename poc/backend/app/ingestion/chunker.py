@@ -1,4 +1,4 @@
-from poc.backend.app.ingestion.sentence_level_chunker import EmbeddingService, chunk_sentences, split_sentences
+from app.ingestion.sentence_level_chunker import chunk_sentences, split_sentences
 
 
 def _table_text(rows: list[list[str]]) -> str:

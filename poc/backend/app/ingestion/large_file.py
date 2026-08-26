@@ -8,7 +8,7 @@ from app.events.broadcaster import broadcaster
 from app.ingestion.chunker import chunk_document
 from app.ingestion.parsers.pdf_parser import is_native_page, parse_native_page, parse_ocr_page
 from app.models import DocumentChunk, ExtractedTable
-from poc.backend.app.ingestion.sentence_level_chunker import EmbeddingService
+from app.ingestion.sentence_level_chunker import EmbeddingService
 
 
 async def process_page(pdf_path: str, page_number: int, config: dict) -> list[dict]:

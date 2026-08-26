@@ -67,27 +67,27 @@ async def query_similar(
     document_id: uuid.UUID,
     query_embedding: list[float],
     top_k: int = 5,
-    exclude_chunk_range: tuple[int, int] | None = None,
+    exclude_chunk_id: uuid.UUID | None = None,
 ) -> list[dict]:
     """Cosine-similarity search scoped to a single document's chunks — the semantic counterpart
     to lookup_internal_evidence's direct keyword lookup, for when the in-doc verifier needs
     nearby-meaning evidence rather than an exact requires-phrase match. `exclude_chunk_range`
     (min_chunk_index, max_chunk_index) excludes the chunk(s) a claim was originally extracted
     from, so a claim is never "verified" against its own source sentence."""
+
+    print(f"query_similar: document_id={document_id}, top_k={top_k}, exclude_chunk_id={exclude_chunk_id}")
+    print(f"query_similar: length={len(query_embedding)} query_embedding={query_embedding}")
+
     distance = DocumentChunk.embedding.cosine_distance(query_embedding)
     stmt = (
         select(DocumentChunk, distance.label("distance"))
         .where(DocumentChunk.document_id == document_id)
         .where(DocumentChunk.embedding.is_not(None))
+        .where(distance.is_not(None))
     )
 
-    if exclude_chunk_range is not None:
-        exclude_min, exclude_max = exclude_chunk_range
-        stmt = stmt.where(
-            (DocumentChunk.char_start.is_(None))
-            | (DocumentChunk.char_start < exclude_min)
-            | (DocumentChunk.char_start > exclude_max)
-        )
+    if exclude_chunk_id is not None:        
+        stmt = stmt.where(DocumentChunk.id != exclude_chunk_id)
 
     stmt = stmt.order_by(distance).limit(top_k)
 

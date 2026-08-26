@@ -35,8 +35,8 @@ async def take_snapshot(document_id: uuid.UUID, thresholds: dict, registry: list
                     "claim_text": claim.claim_text,
                     "domain": claim.domain,
                     "scope": claim.scope,
-                    "verdict": outcome["reconciled"]["final_verdict"],
-                    "confidence": outcome["reconciled"].get("final_confidence"),
+                    "verdict": outcome["verifier"]["final_verdict"],
+                    "confidence": outcome["verifier"].get("final_confidence"),
                 }
             )
 

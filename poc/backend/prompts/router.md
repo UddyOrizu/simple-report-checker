@@ -26,7 +26,7 @@ DECISION RULES, in order:
 3. If the claim ONLY references the document's own prior analysis, internally
    defined methodology, or an internal table/figure ("as shown in Table 2",
    "using the approach outlined above", "as calculated in Section 3") AND has
-   a strong in-document retrieval hit (score > 0.7) → route is "in_document".
+   a strong in-document retrieval hit (score > 0.7) → route is "internal".
 
 4. If `is_opinion_or_unverifiable` is true, or the claim has no groundable
    entities and no in-document match → route is "unverifiable". Do not force
@@ -37,7 +37,7 @@ DECISION RULES, in order:
    "external" with lower confidence, and say so in `reasoning`.
 
 For any route of "external" or "both", populate `suggested_search_queries` with
-3-5 targeted queries built FROM THE CLAIM'S ENTITIES — not the raw sentence.
+3-5 targeted queries built FROM THE CLAIM sentence that can be used in validating\verifiying the claim.
 These queries will be used to search the web for infromation to help verify the claim.
 Bad: "Revenue grew 12% YoY to £4.2M search". 
 Good: "[Company name] annual revenue [Year] filed accounts", "[Company name] Companies House filing".
@@ -52,3 +52,6 @@ claim is to be true.
 <Claim_to_Review>
 {claim_text}
 </Claim_to_Review>
+<Context>
+{context}
+</Context>

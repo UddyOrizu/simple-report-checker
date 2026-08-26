@@ -78,7 +78,12 @@ CREATE TABLE claims (
   domain_source      TEXT,
   embedding          VECTOR(1536),
   status             TEXT NOT NULL DEFAULT 'pending',
-  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  cites_external_source BOOLEAN NOT NULL DEFAULT false,
+  is_opinion_or_unverifiable BOOLEAN NOT NULL DEFAULT false,
+  routing_decision   TEXT,
+  suggested_search_queries JSONB,
+  entities           JSONB
 );
 
 CREATE TABLE evidence (

@@ -14,6 +14,8 @@ class ExtractedClaim(BaseModel):
     claim_id: str
     text: str = Field(..., description="Atomic, self-contained factual claim.")
     entities: List[ClaimEntity] = Field(default_factory=list)
+    scope: Scope = Field(..., description="Whether the claim is about the document's own content (internal) or an outside source (external).")
+    claim_type: ClaimType = Field(..., description="The type of claim (statistical, causal, comparative, definitional, forward-looking, hedged, opinion).")
     source_span: str = Field(..., description="Page/paragraph/section locator in the source document.")
     source_chunk_range: Optional[List[int]] = Field(
         default=None,
@@ -23,7 +25,7 @@ class ExtractedClaim(BaseModel):
             "the claim's own source chunks when retrieving in-document evidence."
         ),
     )
-    requires: list[str]
+    requires: list[str] = Field(default_factory=list)
     cites_external_source: bool = Field(
         default=False, description="True if the claim text itself attributes the fact to an outside source."
     )
@@ -38,7 +40,7 @@ class ClaimList(BaseModel):
 
 class RoutingDecision(BaseModel):
     claim_id: str
-    route: Literal["in_document", "external", "both", "unverifiable"]
+    route: Literal["internal", "external", "both", "unverifiable"]
     reasoning: str = Field(..., description="One or two sentences justifying the route — this is an audit field.")
     confidence: float = Field(..., ge=0.0, le=1.0)
     suggested_search_queries: List[str] = Field(
@@ -63,7 +65,7 @@ class SourceCredibilityScore(BaseModel):
     url: str
     tier: Literal["primary", "reputable_secondary", "aggregator", "low_quality"]
     score: float = Field(..., ge=0.0, le=1.0)
-    reasoning: str
+    reasoning: str = Field(..., description="One or two sentences explaining the credibility score and tier assignment.")
 
 
 class ExternalEvidence(BaseModel):
@@ -72,7 +74,7 @@ class ExternalEvidence(BaseModel):
     source_url: str
     source_tier: Literal["primary", "reputable_secondary", "aggregator", "low_quality"]
     extracted_fact: str = Field(..., description="The specific fact pulled from the source, in your own words.")
-    reasoning: str
+    reasoning: str = Field(..., description="One or two sentences explaining how the source fact supports/contradicts the claim.")
 
 
 class ClaimVerdict(BaseModel):
@@ -80,7 +82,7 @@ class ClaimVerdict(BaseModel):
     claim_text: str
     final_verdict: Literal["supported", "contradicted", "partially_supported", "unverifiable"]
     confidence: float = Field(..., ge=0.0, le=1.0)
-    evidence_summary: str
+    evidence_summary: str = Field(..., description="A brief summary of the evidence leading to the final verdict.")
     citations: List[str] = Field(..., description="Locators/URLs backing the verdict — the defensibility trail.")
     flagged_for_human_review: bool = Field(
         default=False, description="True for low-confidence, contradicted, or high-stakes (financial/legal) claims."

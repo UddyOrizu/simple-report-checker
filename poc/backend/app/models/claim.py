@@ -28,3 +28,8 @@ class Claim(Base):
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    cites_external_source: Mapped[bool] = mapped_column("cites_external_source", nullable=False, server_default=text("false"))
+    is_opinion_or_unverifiable: Mapped[bool] = mapped_column("is_opinion_or_unverifiable", nullable=False, server_default=text("false"))
+    routing_decision: Mapped[str | None] = mapped_column("routing_decision", String)
+    suggested_search_queries: Mapped[list[str] | None] = mapped_column("suggested_search_queries", JSONB)
+    entities: Mapped[list[dict] | None] = mapped_column("entities", JSONB)

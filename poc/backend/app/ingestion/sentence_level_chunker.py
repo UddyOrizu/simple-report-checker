@@ -8,7 +8,7 @@ import spacy
 import tiktoken
 from openai import AsyncOpenAI
 
-from poc.backend.app.nlp.spacy_pipeline import get_nlp
+from app.nlp.spacy_pipeline import get_nlp
 
 
 # ----------------------------------------------------------------------------
