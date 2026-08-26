@@ -7,7 +7,14 @@ from app.agents.reconcile import derive_severity
 from app.models import AgentTrace, Claim, Verdict,Evidence
 
 from app.retrieval.internal_index import query_similar
-from app.schemas.claim import ClaimVerdict, ExternalEvidence, InDocEvidence, SourceCandidate, SourceCredibilityScore
+from app.schemas.claim import (
+    ClaimVerdict,
+    ExternalEvidence,
+    ExternalEvidenceList,
+    InDocEvidence,
+    SourceCandidateList,
+    SourceCredibilityScoreList,
+)
 
 from agno.agent import Agent
 from agno.team import Team
@@ -76,7 +83,7 @@ search_agent = Agent(
     name="External Search Agent",
     model=MODEL,
     tools=[SerperTools( api_key=os.getenv("SERPER_API_KEY"))],  # swap for your search tool
-    output_schema=List[SourceCandidate],
+    output_schema=SourceCandidateList,
     instructions="""
 You find candidate external sources to verify a specific factual claim. You are
 given the claim, its tagged entities, and suggested queries from the router —
@@ -107,7 +114,7 @@ scrape_agent = Agent(
     name="External Fetch/Scrape Agent",
     model=MODEL,
     tools=[WebsiteTools()],
-    output_schema=List[ExternalEvidence],
+    output_schema=ExternalEvidenceList,
     instructions="""
 You fetch full content from candidate source URLs and determine whether each
 source supports, contradicts, or is silent on the claim. You are given the
@@ -140,7 +147,7 @@ RULES:
 credibility_agent = Agent(
     name="Source Credibility Agent",
     model=MODEL,
-    output_schema=List[SourceCredibilityScore],
+    output_schema=SourceCredibilityScoreList,
     instructions="""
 You score the credibility of sources used to verify claims in professional
 services deliverables (audit, tax, advisory). This output feeds directly into
@@ -177,7 +184,7 @@ external_verifier_team = Team(
     name="External Verifier Team",
     mode="coordinate",
     model=MODEL,
-    output_schema=List[ExternalEvidence],
+    output_schema=ExternalEvidenceList,
     max_iterations=3,
     members=[search_agent, scrape_agent, credibility_agent],
     instructions="""
@@ -317,7 +324,7 @@ async def verify_claim_via_agents(session: AsyncSession, claim: Claim, config: d
             f"<Suggested_Queries> {json.dumps(claim.suggested_search_queries, indent=4)} </Suggested_Queries>"
         )
         print(f"External evidence: {team_result.content} for type {team_result.content_type}")
-        external_evidence: List[ExternalEvidence] = team_result.content  # shape depends on your Team output handling
+        external_evidence: list[ExternalEvidence] = team_result.content.evidence
         print(f"External evidence: {external_evidence} for type {type(external_evidence)}")
 
         for ext in external_evidence:

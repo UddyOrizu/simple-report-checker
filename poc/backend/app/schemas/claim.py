@@ -61,11 +61,19 @@ class SourceCandidate(BaseModel):
     snippet: str
 
 
+class SourceCandidateList(BaseModel):
+    candidates: list[SourceCandidate]
+
+
 class SourceCredibilityScore(BaseModel):
     url: str
     tier: Literal["primary", "reputable_secondary", "aggregator", "low_quality"]
     score: float = Field(..., ge=0.0, le=1.0)
     reasoning: str = Field(..., description="One or two sentences explaining the credibility score and tier assignment.")
+
+
+class SourceCredibilityScoreList(BaseModel):
+    scores: list[SourceCredibilityScore]
 
 
 class ExternalEvidence(BaseModel):
@@ -75,6 +83,10 @@ class ExternalEvidence(BaseModel):
     source_tier: Literal["primary", "reputable_secondary", "aggregator", "low_quality"]
     extracted_fact: str = Field(..., description="The specific fact pulled from the source, in your own words.")
     reasoning: str = Field(..., description="One or two sentences explaining how the source fact supports/contradicts the claim.")
+
+
+class ExternalEvidenceList(BaseModel):
+    evidence: list[ExternalEvidence]
 
 
 class ClaimVerdict(BaseModel):
