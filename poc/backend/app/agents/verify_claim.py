@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.challenger import run_challenger
 from app.agents.deterministic_verifier import resolves_deterministically, verify_deterministic
 from app.agents.reconcile import derive_severity, reconcile
+from app.agents.tools.web_scraper import scrape_url_tool
 from app.agents.verifier import run_verifier
 from app.config_hash import compute_config_hash
 from app.llm.client import MissingCredentialsError
@@ -18,7 +19,6 @@ from app.schemas.claim import ExternalEvidence, ExternalEvidenceList, SourceCand
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat  # swap for your provider of choice
 from agno.tools.serper import SerperTools  # swap for your search tool
-from agno.tools.website import WebsiteTools  # swap for your scrape/fetch tool
 from agno.tools.yfinance import YFinanceTools
 
 from dotenv import load_dotenv
@@ -82,7 +82,7 @@ Agent and Credibility Agent handle the rest.
 scrape_agent = Agent(
     name="External Fetch/Scrape Agent",
     model=MODEL,
-    tools=[WebsiteTools()],
+    tools=[scrape_url_tool],
     output_schema=ExternalEvidenceList,
     instructions="""
 You fetch full content from candidate source URLs and determine whether each

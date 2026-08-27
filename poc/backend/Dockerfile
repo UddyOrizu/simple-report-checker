@@ -31,4 +31,9 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app /app
 
+# The scrape tool (app/agents/tools/web_scraper.py) drives a real headless browser so
+# JS-rendered pages load fully before scraping — `--with-deps` pulls in the system libraries
+# Chromium needs (fonts, codecs, etc.) that aren't part of the slim base image.
+RUN playwright install --with-deps chromium
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
