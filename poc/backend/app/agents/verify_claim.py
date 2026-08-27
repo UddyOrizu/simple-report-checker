@@ -34,6 +34,7 @@ MODEL = OpenAIChat(id="gpt-4.1", api_key=openai_api_key, base_url=openai_api_bas
 EXTERNAL_VERIFICATION_TIMEOUT_SECONDS = 90
 
 _SOURCE_TIER_AUTHORITY = {"primary": 1.0, "reputable_secondary": 0.75, "aggregator": 0.4, "low_quality": 0.15}
+_UNSCORED_FALLBACK_TIER = "aggregator"
 
 # ============================================================================
 # EXTERNAL EVIDENCE PIPELINE (Search -> Scrape/Fetch -> Credibility)
@@ -97,17 +98,16 @@ RULES:
 3. If a page fails to load, is paywalled, or doesn't actually contain the
    relevant fact despite the snippet, note that and move to the next candidate
    rather than forcing a verdict from insufficient content.
-4. Be alert to DATE SENSITIVITY — thresholds, rates, and regulations change.
-   If the source is dated or versioned, check whether it reflects the period
-   the claim refers to. A correct historical figure is not evidence for a
-   current claim, and vice versa.
-5. `source_tier` is your own read of the source type at this stage (primary
-   government/official vs secondary vs aggregator) — the Credibility Agent will
-   independently score it; your tagging here just needs to be a reasonable
-   first pass, not final.
-6. Produce one ExternalEvidence entry per source you actually fetched and got
+4. Populate `source_as_of_date` with the specific date/period/version the
+   source's content reflects (e.g. "2024/25 tax year", "March 2025", "last
+   updated Jan 2025") — thresholds, rates, and regulations change, and this is
+   what lets a downstream check judge whether the source is actually current
+   for the claim, rather than a correct-but-stale figure being mistaken for
+   support. Leave it null only if the page genuinely gives no dating signal.
+5. Produce one ExternalEvidence entry per source you actually fetched and got
    usable content from. Do not fabricate entries for sources you couldn't
-   access.
+   access. Do not guess at the source's credibility tier — that's the
+   Credibility Agent's job, not yours; stay focused on what the page says.
 """,
 )
 
@@ -201,7 +201,7 @@ async def _run_external_pipeline(claim: Claim) -> list[Evidence]:
 
     credibility_result = await credibility_agent.arun(
         f"<Claim> {claim.claim_text} </Claim>\n<Sources_To_Score>\n"
-        + "\n".join(f"- {ext.source_url} (fetch-stage tier guess: {ext.source_tier})" for ext in fetched)
+        + "\n".join(f"- {ext.source_url}" for ext in fetched)
         + "\n</Sources_To_Score>"
     )
     scores_by_url = {score.url: score for score in credibility_result.content.scores}
@@ -209,15 +209,22 @@ async def _run_external_pipeline(claim: Claim) -> list[Evidence]:
     evidence: list[Evidence] = []
     for ext in fetched:
         score = scores_by_url.get(ext.source_url)
-        tier = score.tier if score else ext.source_tier
-        authority = score.score if score else _SOURCE_TIER_AUTHORITY.get(ext.source_tier, 0.5)
-        reasoning = f"{ext.reasoning} Credibility: {score.reasoning}" if score else ext.reasoning
+        # The Credibility Agent scores every URL the Scrape Agent produced evidence for, so a
+        # missing score should only happen if that agent's response was incomplete — fall back to
+        # a conservative middle tier rather than trusting an un-scored source at face value.
+        tier = score.tier if score else _UNSCORED_FALLBACK_TIER
+        authority = score.score if score else _SOURCE_TIER_AUTHORITY[_UNSCORED_FALLBACK_TIER]
+        credibility_note = f"Credibility: {score.reasoning}" if score else "Credibility: score unavailable, defaulted conservatively."
+        date_note = f" As of: {ext.source_as_of_date}." if ext.source_as_of_date else ""
         evidence.append(
             Evidence(
                 claim_id=claim.id,
                 source_type="external",
                 source_ref=f"{ext.source_url} (tier: {tier})",
-                content_snippet=f"Verdict: {ext.verdict}. Extracted fact: {ext.extracted_fact}. Reasoning: {reasoning}",
+                content_snippet=(
+                    f"Verdict: {ext.verdict}. Extracted fact: {ext.extracted_fact}.{date_note} "
+                    f"Reasoning: {ext.reasoning} {credibility_note}"
+                ),
                 authority_score=authority,
             )
         )
@@ -330,7 +337,7 @@ async def verify_claim_via_agents(session: AsyncSession, claim: Claim, config: d
             verifier_reasoning=verifier_result.reasoning,
             challenger_verdict=challenger_result.verdict,
             challenger_confidence=challenger_result.confidence,
-            challenger_reasoning=challenger_result.reasoning,
+            challenger_reasoning=challenger_result.compose_reasoning(),
             agreement=reconciled["agreement"],
             final_verdict=reconciled["final_verdict"],
             final_confidence=reconciled["final_confidence"],

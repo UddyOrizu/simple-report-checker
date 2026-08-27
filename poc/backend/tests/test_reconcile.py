@@ -1,7 +1,9 @@
 import pytest
 
 from app.agents.reconcile import derive_severity, reconcile
-from app.schemas.verification import ChallengerResult, VerifierResult
+from app.schemas.verification import ChallengerCheck, ChallengerResult, VerifierResult
+
+_OK_CHECK = ChallengerCheck(ok=True, reasoning="x")
 
 
 def _verifier(verdict: str, confidence: float = 0.9) -> VerifierResult:
@@ -9,7 +11,15 @@ def _verifier(verdict: str, confidence: float = 0.9) -> VerifierResult:
 
 
 def _challenger(verdict: str, accepted_verdict: str, confidence: float = 0.8) -> ChallengerResult:
-    return ChallengerResult(verdict=verdict, accepted_verdict=accepted_verdict, confidence=confidence, reasoning="x")
+    return ChallengerResult(
+        verdict=verdict,
+        accepted_verdict=accepted_verdict,
+        confidence=confidence,
+        citation_fidelity=_OK_CHECK,
+        basis_match=_OK_CHECK,
+        completeness=_OK_CHECK,
+        source_quality=_OK_CHECK,
+    )
 
 
 @pytest.mark.parametrize(

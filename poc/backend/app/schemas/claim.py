@@ -80,7 +80,12 @@ class ExternalEvidence(BaseModel):
     claim_id: str
     verdict: Literal["supports", "contradicts", "not_enough_info"]
     source_url: str
-    source_tier: Literal["primary", "reputable_secondary", "aggregator", "low_quality"]
+    source_as_of_date: str | None = Field(
+        None,
+        description="The specific date/period/version the source's content reflects (e.g. '2024/25 tax "
+        "year', 'March 2025', 'last updated Jan 2025') — null only if the source gives no dating signal "
+        "at all. Lets downstream checks judge whether the source is actually current for the claim.",
+    )
     extracted_fact: str = Field(..., description="The specific fact pulled from the source, in your own words.")
     reasoning: str = Field(..., description="One or two sentences explaining how the source fact supports/contradicts the claim.")
 

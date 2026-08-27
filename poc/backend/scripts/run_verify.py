@@ -60,7 +60,13 @@ async def _run_and_print(session, claim, evidence: list[Evidence]) -> None:
     challenger_result, _, _, challenger_tools = await run_challenger(session, claim, evidence, verifier_result)
     print("=== Challenger ===")
     print(f"verdict={challenger_result.verdict}  accepted_verdict={challenger_result.accepted_verdict}  confidence={challenger_result.confidence:.2f}")
-    print(f"reasoning: {challenger_result.reasoning}")
+    for label, check in [
+        ("citation_fidelity", challenger_result.citation_fidelity),
+        ("basis_match", challenger_result.basis_match),
+        ("completeness", challenger_result.completeness),
+        ("source_quality", challenger_result.source_quality),
+    ]:
+        print(f"  [{label}] ok={check.ok}: {check.reasoning}")
     print(f"tool calls: {json.dumps(challenger_tools, indent=2)}")
     print()
 
