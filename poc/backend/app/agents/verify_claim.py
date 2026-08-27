@@ -302,9 +302,7 @@ async def verify_claim_via_agents(session: AsyncSession, claim: Claim, config: d
         evidence.extend(result)
 
     verifier_result, verifier_prompt, verifier_raw, verifier_tools = await run_verifier(session, claim, evidence)
-    challenger_result, challenger_prompt, challenger_raw, challenger_tools = await run_challenger(
-        session, claim, evidence, verifier_result
-    )
+    challenger_result, challenger_prompt, challenger_raw, challenger_tools = await run_challenger(session, claim, evidence, verifier_result)
     reconciled = reconcile(verifier_result, challenger_result, claim.domain)
 
     config_hash = compute_config_hash()
