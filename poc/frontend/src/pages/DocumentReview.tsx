@@ -37,7 +37,7 @@ export function DocumentReview() {
   if (isLoading || !document) return <p className="text-gray-500 p-8">Loading…</p>;
 
   return (
-    <div className="max-w-5xl mx-auto p-8">
+    <div className="max-w-7xl mx-auto p-8">
       <Link to="/" className="text-sm text-blue-600">
         ← Back to documents
       </Link>
@@ -54,12 +54,12 @@ export function DocumentReview() {
       ) : document.status === "failed" ? (
         <p className="text-red-600">Processing failed for this document.</p>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-6 items-start">
           <div>
             <h2 className="text-sm font-medium text-gray-500 mb-2">Document</h2>
             <DocumentViewer claims={claims ?? []} selectedClaimId={selectedClaimId} onSelectClaim={setSelectedClaimId} />
           </div>
-          <div>
+          <div className="lg:sticky lg:top-8">
             <h2 className="text-sm font-medium text-gray-500 mb-2">Claim review</h2>
             {selectedClaimId ? (
               <ClaimReviewPanel claimId={selectedClaimId} />
