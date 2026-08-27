@@ -22,8 +22,7 @@ def build_verifier_agent(session, claim) -> Agent:
     """A fresh Agent per call, not the shared cached client — its internal_lookup tool is bound
     to this specific session+claim via closure, so it can't be reused across calls the way the
     plain structured-output agents (decomposer, navigator) are."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise MissingCredentialsError("ANTHROPIC_API_KEY is not set — this pipeline stage is BLOCKED-CREDENTIALS")
+    
     tools = [make_internal_lookup_tool(session, claim)] if session is not None else []
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL", "https://eu.api.openai.com/v1")

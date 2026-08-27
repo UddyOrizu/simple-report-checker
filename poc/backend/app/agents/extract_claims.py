@@ -174,11 +174,11 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
 
         async def _decompose_item(index: int, text: str, is_row: bool) -> list[dict] | None:
             if is_row:
-                local_context = f"{chunk.context_capsule}\nTable header: {header}" if header else chunk.context_capsule
+                local_context = f"{chunk.chunk_text}\nTable header: {header}" if header else chunk.chunk_text
                 needs_llm = True
             else:
                 prior = items[index - 1][0] if index > 0 else preceding_sentence
-                local_context = chunk.context_capsule
+                local_context = chunk.chunk_text 
                 if prior:
                     local_context += (
                         f'\nPreceding sentence (context only, for resolving pronouns/references — '
