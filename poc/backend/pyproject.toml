@@ -33,7 +33,6 @@ dependencies = [
     "beautifulsoup4==4.15.0",
     "jsonpickle==4.1.2",
     "yfinance==1.7.0",
-    "playwright>=1.45",
     "markdownify>=0.13",
 ]
 
