@@ -19,6 +19,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat  # swap for your provider of choice
 from agno.tools.serper import SerperTools  # swap for your search tool
 from agno.tools.website import WebsiteTools  # swap for your scrape/fetch tool
+from agno.tools.yfinance import YFinanceTools
 
 from dotenv import load_dotenv
 
@@ -50,7 +51,7 @@ _UNSCORED_FALLBACK_TIER = "aggregator"
 search_agent = Agent(
     name="External Search Agent",
     model=MODEL,
-    tools=[SerperTools(api_key=os.getenv("SERPER_API_KEY"))],  # swap for your search tool
+    tools=[SerperTools(api_key=os.getenv("SERPER_API_KEY")),YFinanceTools(all=True)],  # swap for your search tool
     output_schema=SourceCandidateList,
     instructions="""
 You find candidate external sources to verify a specific factual claim. You are

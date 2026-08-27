@@ -23,20 +23,17 @@ class ChallengerCheck(BaseModel):
 
 
 class ChallengerResult(BaseModel):
-    citation_fidelity: ChallengerCheck = Field(
-        ..., description="Does the evidence the Verifier cited actually say what the Verifier claims it says?"
-    )
-    basis_match: ChallengerCheck = Field(
-        ..., description="Same basis/definition and time period as the claim, not just a superficially similar figure?"
-    )
-    completeness: ChallengerCheck = Field(
-        ..., description="Does the evidence support the FULL claim, or only part of it?"
-    )
-    source_quality: ChallengerCheck = Field(
-        ...,
-        description="For external evidence: current, authoritative, corroborated by more than one source? "
-        "ok=true (not applicable) when the claim's evidence is entirely internal.",
-    )
+    """ 
+    citation_fidelity: Does the evidence the Verifier cited actually say what the Verifier claims it says?
+    basis_match: Same basis/definition and time period as the claim, not just a superficially similar figure?
+    completeness: Does the evidence support the FULL claim, or only part of it?
+    source_quality: For external evidence: current, authoritative, corroborated by more than one source? ok=true (not applicable) when the claim's evidence is entirely internal.
+    verdict: the challenger's own independent verdict
+    """
+    citation_fidelity: ChallengerCheck 
+    basis_match: ChallengerCheck 
+    completeness: ChallengerCheck 
+    source_quality: ChallengerCheck 
     verdict: VerdictValue  # the challenger's own independent verdict
     accepted_verdict: VerdictValue  # the verdict that stands: the verifier's if accepted, the challenger's own if rejected
     confidence: float
