@@ -10,16 +10,17 @@ LLM review — with full tracing and a review UI.
 - Docker + Docker Compose
 - Python 3.11 (only needed if you want to run the backend outside Docker)
 - Node 18+ and npm (for the frontend)
-- An [Anthropic API key](https://console.anthropic.com/) — optional. Without one, ingestion,
-  chunking, structural indexing, and arithmetic (deterministic) verification all work fully;
-  everything that needs an LLM call (claim decomposition, section summaries, agent-based
+- An [Anthropic API key](https://console.anthropic.com/) or an [OpenAI API key](https://platform.openai.com/api-keys)
+  — optional, and only one of the two is needed (pick via `LLM_PROVIDER`). Without one,
+  ingestion, chunking, structural indexing, and arithmetic (deterministic) verification all work
+  fully; everything that needs an LLM call (claim decomposition, section summaries, agent-based
   verification) is skipped gracefully rather than failing the run.
 
 ## Quick start
 
 ```bash
 cd poc
-cp .env.example .env        # fill in ANTHROPIC_API_KEY if you have one
+cp .env.example .env        # fill in ANTHROPIC_API_KEY (or set LLM_PROVIDER=openai + OPENAI_API_KEY)
 docker compose up -d        # starts Postgres + the API (builds the API image on first run)
 ```
 
@@ -55,8 +56,31 @@ Docker:
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | `postgresql+asyncpg://poc:poc@localhost:5433/claim_checker` | Postgres connection (async driver) |
-| `ANTHROPIC_API_KEY` | *(empty)* | Required for any LLM-backed stage; see above |
+| `LLM_PROVIDER` | `anthropic` | Which backend every Agno agent uses: `anthropic` or `openai` |
+| `ANTHROPIC_API_KEY` | *(empty)* | Required for any LLM-backed stage when `LLM_PROVIDER=anthropic` |
+| `OPENAI_API_KEY` | *(empty)* | Required for any LLM-backed stage when `LLM_PROVIDER=openai` |
+| `OPENAI_BASE_URL` | `https://eu.api.openai.com/v1` | Only used when `LLM_PROVIDER=openai`; point at a proxy/gateway if needed |
+| `ANTHROPIC_MODEL_ID` / `ANTHROPIC_MINI_MODEL_ID` | `claude-sonnet-4-5-20250929` / `claude-haiku-4-5-20251001` | Override the standard/mini model tier for Anthropic |
+| `OPENAI_MODEL_ID` / `OPENAI_MINI_MODEL_ID` | `gpt-4o` / `gpt-4o-mini` | Override the standard/mini model tier for OpenAI |
+| `INTERNAL_VERIFICATION_VOTERS` | `standard,mini,fino1` | Which models sit on the internal-claim "highest vote" panel (see below) |
+| `HF_TOKEN` | *(empty)* | Hugging Face token for the `fino1` voter (TheFinAI/Fin-o1-8B). Missing token just drops that voter from the vote |
+| `FINO1_MODEL_ID` | `TheFinAI/Fin-o1-8B` | Override the specialized finance model used by the `fino1` voter |
+| `HF_INFERENCE_BASE_URL` | *(empty — HF's shared routing)* | Set only if Fin-o1-8B is deployed as a dedicated HF Inference Endpoint |
 | `STORAGE_DIR` | `./storage` | Where uploaded documents are stored on disk |
+
+### Internal-claim verification
+
+Claims routed `scope="internal"` are verified by a multi-model "highest vote" panel
+(`app/agents/internal_vote_panel.py`) instead of the verifier/challenger adversarial pair used for
+`external`/`both` claims: every configured voter reads the same evidence independently and votes
+`supported`/`contradicted`/`insufficient`; the majority wins, and a tie (including a 3-way split)
+resolves to `disputed` at zero confidence rather than picking one arbitrarily. Evidence is gathered
+through an escalating-cost ladder — exact keyword lookup, then embedding search over the claim's
+`requires` phrases, then an LLM section-navigator — and only when all three find nothing does it
+fall back to handing the whole document to the panel directly (the claim's own source chunk has its
+wording redacted first, so a voter can't "verify" the claim by reading it back to itself). Financial
+claims that resolve deterministically (exact arithmetic recomputation) skip this panel entirely —
+that path is already exact and free.
 
 Inside `docker-compose.yml`, the `api` service talks to Postgres over the Docker network
 (`postgres:5432`); from your host machine (e.g. running `alembic` or `pytest` locally), Postgres

@@ -6,18 +6,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.challenger import run_challenger
 from app.agents.deterministic_verifier import resolves_deterministically, verify_deterministic
+from app.agents.internal_vote_panel import run_internal_vote_panel, tally_votes
 from app.agents.reconcile import derive_severity, reconcile
 from app.agents.tools.web_scraper import scrape_url_tool
-from app.agents.verifier import run_verifier
+from app.agents.verifier import format_evidence_bundle, run_verifier
 from app.config_hash import compute_config_hash
-from app.llm.client import MissingCredentialsError
+from app.llm.client import build_model, require_llm_credentials
 from app.models import AgentTrace, Claim, Evidence, Verdict
+from app.retrieval.chunk_sweep import build_chunk_sweep_bundle
 from app.retrieval.cross_reference import resolve_cross_reference
-from app.retrieval.internal_index import lookup_internal_evidence
+from app.retrieval.internal_index import lookup_internal_evidence, semantic_internal_lookup
 from app.schemas.claim import ExternalEvidence, ExternalEvidenceList, SourceCandidateList, SourceCredibilityScoreList
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat  # swap for your provider of choice
 from agno.tools.serper import SerperTools  # swap for your search tool
 from agno.tools.yfinance import YFinanceTools
 
@@ -25,10 +26,11 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Load environment variables from .env file
 
-openai_api_key = os.getenv("OPENAI_API_KEY")
-openai_api_base = os.getenv("OPENAI_BASE_URL", "https://eu.api.openai.com/v1")
-
-MODEL = OpenAIChat(id="gpt-4.1", api_key=openai_api_key, base_url=openai_api_base)  # swap for your model of choice
+# build_model() doesn't validate credentials — these three agents are constructed eagerly below,
+# at import time, so raising here would take down stages that don't need an LLM at all. The
+# credential check is deferred to require_llm_credentials() in _gather_external_evidence, called
+# at actual call time instead.
+MODEL = build_model("standard")
 
 # One claim's external evidence gathering (search -> scrape -> credibility) shouldn't be able to
 # stall an entire document's verification run if a fetched site hangs or a search API is slow.
@@ -148,22 +150,21 @@ synthesis, not be treated as equivalent to a primary-source confirmation.
 """,
 )
 
-def _require_openai_credentials() -> None:
-    """The external team's agents are constructed eagerly at import time (agno doesn't validate
-    credentials until a real call is made), so without this explicit check a missing
-    OPENAI_API_KEY would surface as an opaque network/auth error deep inside Team.arun rather
-    than the clean MissingCredentialsError every other LLM-dependent stage raises."""
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise MissingCredentialsError("OPENAI_API_KEY is not set — external verification is BLOCKED-CREDENTIALS")
-
-
 async def _gather_internal_evidence(session: AsyncSession, claim: Claim) -> list[Evidence]:
-    """Direct lookup first (5.1); only pay for the LLM-backed cross-reference navigator (5.1.1)
-    when the direct lookup genuinely misses — the common case is evidence co-located with the
-    claim, where a navigation call would be wasted cost."""
+    """Escalating cost ladder: exact keyword lookup first (5.1) — free; then embedding search
+    over `claim.requires` (5.1's semantic counterpart) when the exact lookup misses, since a
+    requires-phrase not sharing literal vocabulary with its evidence is a common failure mode for
+    the word-overlap check alone; only then pay for the LLM-backed cross-reference navigator
+    (5.1.1), the most expensive of the three, for when evidence exists but lives outside the
+    claim's own section entirely."""
     evidence = await lookup_internal_evidence(session, claim)
     if evidence:
         return evidence
+
+    evidence = await semantic_internal_lookup(session, claim)
+    if evidence:
+        return evidence
+
     cross_ref = await resolve_cross_reference(session, claim)
     return [cross_ref] if cross_ref is not None else []
 
@@ -174,7 +175,7 @@ async def _gather_external_evidence(claim: Claim) -> list[Evidence]:
     a member. Each stage's output gates the next: no candidates means no scrape call, no fetched
     evidence means no credibility call, so every claim that reaches this function and finds
     something at all runs through all three agents, not a coordinator's discretionary subset."""
-    _require_openai_credentials()
+    require_llm_credentials()
     try:
         return await asyncio.wait_for(_run_external_pipeline(claim), timeout=EXTERNAL_VERIFICATION_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
@@ -285,12 +286,76 @@ async def _verify_deterministic_and_persist(session: AsyncSession, claim: Claim,
     return {"reconciled": reconciled, "evidence": evidence}
 
 
+async def _verify_internal_claim_via_vote_panel(session: AsyncSession, claim: Claim) -> dict:
+    """Internal-scope claims (not "external"/"both") go through a multi-model "highest vote" panel
+    instead of the verifier/challenger adversarial pair — every voter independently reads the same
+    evidence and votes supported/contradicted/insufficient, and the majority wins (see
+    app.agents.internal_vote_panel for the panel composition and tie-breaking rule). This is a
+    genuinely different reconciliation shape from external/both claims, not just a smaller panel:
+    an adversarial pair needs one agent to accept or reject the other's specific reasoning, while a
+    vote panel's agents never see each other's answers at all.
+
+    Evidence gathering escalates through direct lookup, semantic search, and the cross-reference
+    navigator (_gather_internal_evidence) before falling back to the most expensive tier — handing
+    every chunk in the document (the claim's own origin chunk redacted so a voter can't "verify"
+    the claim by reading it back to itself) to the panel directly — only when all three cheaper
+    tiers found nothing at all."""
+    require_llm_credentials()
+
+    evidence = await _gather_internal_evidence(session, claim)
+    if evidence:
+        evidence_bundle = format_evidence_bundle(evidence)
+    else:
+        evidence_bundle = await build_chunk_sweep_bundle(session, claim)
+
+    votes = await run_internal_vote_panel(claim.claim_text, claim.claim_type, claim.scope, evidence_bundle)
+    reconciled = tally_votes(votes, claim.domain)
+
+    config_hash = compute_config_hash()
+    for item in evidence:
+        session.add(item)
+    for vote in votes:
+        session.add(
+            AgentTrace(
+                claim_id=claim.id,
+                agent_name=f"internal_voter:{vote.voter}",
+                prompt_sent=vote.prompt_sent,
+                raw_response=vote.raw_response if vote.error is None else f"ERROR: {vote.error}",
+                tool_calls=None,
+                config_hash=config_hash,
+            )
+        )
+    session.add(
+        Verdict(
+            claim_id=claim.id,
+            verifier_verdict=reconciled["final_verdict"],
+            verifier_confidence=reconciled["final_confidence"],
+            verifier_reasoning=reconciled["reasoning"],
+            agreement=reconciled["agreement"],
+            final_verdict=reconciled["final_verdict"],
+            final_confidence=reconciled["final_confidence"],
+            severity=reconciled["severity"],
+            resolved_by=reconciled["resolved_by"],
+            voter_breakdown=reconciled["voter_breakdown"],
+        )
+    )
+    await session.commit()
+
+    return {"reconciled": reconciled, "evidence": evidence}
+
+
 async def verify_claim_via_agents(session: AsyncSession, claim: Claim, config: dict) -> dict:
     """Gathers evidence from wherever claim.scope says to look (internal lookup + cross-reference
     fallback, and/or the real search->scrape->credibility external team — concurrently when scope
     is "both", not sequentially), then runs it through the verifier/challenger adversarial pair
     and reconciles their verdicts. Persists one AgentTrace row per agent and one verdicts row —
-    the actual Phase 6.5 tracing contract, not the fabricated agreement data this used to write."""
+    the actual Phase 6.5 tracing contract, not the fabricated agreement data this used to write.
+
+    Pure-internal claims are diverted to _verify_internal_claim_via_vote_panel above instead —
+    "both"/"external" claims are unaffected and keep this adversarial pipeline."""
+    if claim.scope == "internal":
+        return await _verify_internal_claim_via_vote_panel(session, claim)
+
     tasks = []
     if claim.scope in ("internal", "both"):
         tasks.append(_gather_internal_evidence(session, claim))

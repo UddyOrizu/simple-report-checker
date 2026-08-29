@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, func, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -27,3 +27,8 @@ class Verdict(Base):
     severity: Mapped[str] = mapped_column(String, nullable=False, server_default="info")
     resolved_by: Mapped[str] = mapped_column(String, nullable=False)
     resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Per-voter breakdown for resolved_by == "ensemble_vote": [{"voter", "verdict", "confidence",
+    # "reasoning"}, ...] — the majority result itself lives in verifier_verdict/confidence/
+    # reasoning (there's no single "challenger" in a vote panel), this is the audit trail showing
+    # how each model voted.
+    voter_breakdown: Mapped[list[dict] | None] = mapped_column(JSONB)

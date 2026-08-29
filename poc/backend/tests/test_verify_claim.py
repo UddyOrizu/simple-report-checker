@@ -1,13 +1,12 @@
-import os
-
 import pytest
 from sqlalchemy import select
 
 from app.agents.verify_claim import verify_claim_via_agents
+from app.llm.client import has_llm_credentials
 from app.models import AgentTrace, Claim, Document, DocumentChunk, ExtractedTable
 
-HAS_API_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
-requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="ANTHROPIC_API_KEY not set — LLM stage is BLOCKED-CREDENTIALS")
+HAS_API_KEY = has_llm_credentials()
+requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="no LLM credentials set for the active LLM_PROVIDER — LLM stage is BLOCKED-CREDENTIALS")
 
 
 async def _make_claim(db_session, *, claim_text: str, scope: str, requires: list[str]) -> Claim:

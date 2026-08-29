@@ -6,11 +6,12 @@ import httpx
 import pytest
 
 from app.db import async_session
+from app.llm.client import has_llm_credentials
 from app.main import app
 from app.models import Document
 
-HAS_API_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
-requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="ANTHROPIC_API_KEY not set — LLM stage is BLOCKED-CREDENTIALS")
+HAS_API_KEY = has_llm_credentials()
+requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="no LLM credentials set for the active LLM_PROVIDER — LLM stage is BLOCKED-CREDENTIALS")
 
 
 async def _client():

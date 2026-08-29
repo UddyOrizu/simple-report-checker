@@ -1,20 +1,16 @@
-import os
-
 import truststore
 from dotenv import load_dotenv
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
 from agno.tools.serper import SerperTools
 
 from app.agents.tools.internal_lookup import make_internal_lookup_tool
-from app.llm.client import MissingCredentialsError, load_prompt
+from app.llm.client import build_model, load_prompt, require_llm_credentials
 from app.schemas.verification import VerifierResult
 
 truststore.inject_into_ssl()
 load_dotenv()
 
-VERIFIER_MODEL_ID = "gpt-4o"
 _INSTRUCTIONS = load_prompt("verifier")
 
 
@@ -22,11 +18,9 @@ def build_verifier_agent(session, claim) -> Agent:
     """A fresh Agent per call, not the shared cached client — its internal_lookup tool is bound
     to this specific session+claim via closure, so it can't be reused across calls the way the
     plain structured-output agents (decomposer, navigator) are."""
-    
+    require_llm_credentials()
     tools = [make_internal_lookup_tool(session, claim)] if session is not None else []
-    api_key = os.getenv("OPENAI_API_KEY")
-    base_url = os.getenv("OPENAI_BASE_URL", "https://eu.api.openai.com/v1")
-    return Agent(model=OpenAIChat(id=VERIFIER_MODEL_ID, api_key=api_key, base_url=base_url), output_schema=VerifierResult, tools=tools, markdown=False)
+    return Agent(model=build_model("standard"), output_schema=VerifierResult, tools=tools, markdown=False)
 
 
 def format_evidence_bundle(evidence: list) -> str:

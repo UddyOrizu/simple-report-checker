@@ -3,11 +3,13 @@ import os
 import pytest
 import yaml
 
+from app.llm.client import has_llm_credentials
+
 REFERENCE_SET_DIR = os.path.join(os.path.dirname(__file__), "reference_set")
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
-HAS_API_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
-requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="ANTHROPIC_API_KEY not set — LLM stage is BLOCKED-CREDENTIALS")
+HAS_API_KEY = has_llm_credentials()
+requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="no LLM credentials set for the active LLM_PROVIDER — LLM stage is BLOCKED-CREDENTIALS")
 
 
 def load_reference_set() -> list[dict]:

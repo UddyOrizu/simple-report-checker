@@ -3,9 +3,10 @@ import os
 import pytest
 
 from app.agents.verifier import _INSTRUCTIONS
+from app.llm.client import has_llm_credentials
 
-HAS_API_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
-requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="ANTHROPIC_API_KEY not set — LLM stage is BLOCKED-CREDENTIALS")
+HAS_API_KEY = has_llm_credentials()
+requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="no LLM credentials set for the active LLM_PROVIDER — LLM stage is BLOCKED-CREDENTIALS")
 
 
 def test_instructions_are_loaded_from_the_prompt_file_not_hardcoded():

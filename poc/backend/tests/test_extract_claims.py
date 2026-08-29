@@ -4,7 +4,7 @@ import pytest_asyncio
 import yaml
 from sqlalchemy import select
 
-from app.agents.extract_claims import direct_claim, extract_claims_for_document, split_sentences
+from app.agents.extract_claims import _has_groundable_entity, direct_claim, extract_claims_for_document, split_sentences
 from app.events.broadcaster import broadcaster
 from app.models import Claim, Document, DocumentChunk
 
@@ -29,6 +29,24 @@ def test_direct_claim_statistical_when_sentence_has_a_number():
 def test_direct_claim_definitional_when_sentence_has_no_number():
     claim = direct_claim("The company operates in the software industry.")
     assert claim["claim_type"] == "definitional"
+
+
+def test_groundable_entity_true_for_money_percent_date_law():
+    for label in ("MONEY", "PERCENT", "DATE", "LAW"):
+        assert _has_groundable_entity([{"text": "x", "label": label}])
+
+
+def test_groundable_entity_false_for_bare_cardinal_or_org():
+    """Headcount-style numbers (CARDINAL) and a bare company mention (ORG) shouldn't force a
+    routing call on their own — only MONEY/PERCENT/DATE/LAW, the types router.md's rule 2 says
+    always need external grounding, should override the direct_claim fast path."""
+    assert not _has_groundable_entity([{"text": "500", "label": "CARDINAL"}])
+    assert not _has_groundable_entity([{"text": "Acme Ltd", "label": "ORG"}])
+    assert not _has_groundable_entity([])
+
+
+def test_groundable_entity_is_case_insensitive():
+    assert _has_groundable_entity([{"text": "£4.2M", "label": "money"}])
 
 
 @pytest_asyncio.fixture

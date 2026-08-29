@@ -1,11 +1,10 @@
-import os
-
 import pytest
 
 from app.agents.decomposer import decompose_sentence
+from app.llm.client import has_llm_credentials
 
-HAS_API_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
-requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="ANTHROPIC_API_KEY not set — LLM stage is BLOCKED-CREDENTIALS")
+HAS_API_KEY = has_llm_credentials()
+requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="no LLM credentials set for the active LLM_PROVIDER — LLM stage is BLOCKED-CREDENTIALS")
 
 EXAMPLE_A_SENTENCE = (
     "Revenue grew 12% YoY, driven primarily by APAC expansion and improved cost discipline, "

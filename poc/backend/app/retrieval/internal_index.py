@@ -3,8 +3,15 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ingestion.sentence_level_chunker import EmbeddingService
 from app.models import Claim, DocumentChunk, DocumentSection, Evidence, ExtractedTable
 from app.retrieval.matching import citation, matches_requires, table_text
+
+# A hit below this cosine similarity is too weak to trust as evidence on its own — this mirrors
+# the "strong in-document match" threshold the router prompt itself uses (router.md rule 3) so a
+# claim that was routed "internal" because of a >0.7 hit gets verified against that same bar of
+# confidence, not a looser one.
+SEMANTIC_EVIDENCE_SIMILARITY_THRESHOLD = 0.75
 
 
 async def lookup_internal_evidence(session: AsyncSession, claim: Claim) -> list[Evidence]:
@@ -104,3 +111,45 @@ async def query_similar(
         }
         for chunk, chunk_distance in rows
     ]
+
+
+async def semantic_internal_lookup(
+    session: AsyncSession, claim: Claim, embedding_service: EmbeddingService | None = None
+) -> list[Evidence]:
+    """The embedding-search counterpart to lookup_internal_evidence's exact word-overlap match —
+    tried only after that direct lookup finds nothing, since it costs an embedding call per
+    `requires` phrase. Each phrase in `claim.requires` (already the decomposer's own statement of
+    what's needed to verify the claim) becomes its own semantic query rather than embedding the
+    whole claim text once, so a claim needing two distinct facts ("Q3 headcount" and "attrition
+    rate") can surface evidence for each independently instead of one blended, diluted vector.
+    Hits below SEMANTIC_EVIDENCE_SIMILARITY_THRESHOLD are dropped rather than kept as weak
+    evidence — this is meant to find a real match with a different vocabulary than the exact
+    lookup missed, not a vaguely-related passage."""
+    requires = [r for r in (claim.requires or []) if r and r.strip()]
+    if not requires:
+        return []
+
+    service = embedding_service or EmbeddingService()
+    query_embeddings = await service.embed_texts(requires)
+
+    seen_chunk_ids: set[str] = set()
+    evidence: list[Evidence] = []
+    for embedding in query_embeddings:
+        hits = await query_similar(session, claim.document_id, embedding, top_k=3, exclude_chunk_id=claim.chunk_id)
+        for hit in hits:
+            if hit["similarity"] < SEMANTIC_EVIDENCE_SIMILARITY_THRESHOLD:
+                continue
+            if hit["chunk_id"] in seen_chunk_ids:
+                continue  # multiple requires-phrases can surface the same chunk — cite it once
+            seen_chunk_ids.add(hit["chunk_id"])
+            evidence.append(
+                Evidence(
+                    claim_id=claim.id,
+                    source_type="internal_semantic",
+                    source_ref=citation(f"document_chunk:{hit['chunk_id']}", hit["page_number"], None),
+                    content_snippet=hit["text"],
+                    authority_score=hit["similarity"],
+                )
+            )
+
+    return evidence

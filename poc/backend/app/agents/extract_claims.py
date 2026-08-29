@@ -54,11 +54,13 @@ def split_sentences(text: str) -> list[str]:
 
 
 def direct_claim(sentence: str) -> dict:
-    """A simple single-fact sentence skips the decomposition AND routing LLM calls entirely —
-    becomes one claim record via lightweight heuristics instead. `_direct` marks it downstream so
-    routing also takes the no-LLM path (scope defaults to "internal": the fast path only fires for
-    sentences with no coordinating conjunction and a single clause, which are exactly the
-    low-stakes, self-contained, in-document facts that don't need a routing call)."""
+    """A simple single-fact sentence skips the decomposition LLM call — there's nothing to split
+    out of a single clause. `_direct` marks it downstream so it also skips the routing call and
+    defaults scope to "internal", UNLESS it's tagged with a MONEY/PERCENT/DATE/LAW entity (see
+    _has_groundable_entity in _finalize below): a hard figure, rate, or date is exactly the kind
+    of claim router.md's own rule 2 says must always be externally checked regardless of how well
+    the document agrees with itself, so those still get a real routing call despite being
+    syntactically simple."""
     has_number = bool(re.search(r"\d", sentence))
     claim_type = "statistical" if has_number and _STATISTICAL_CUES.search(sentence) else "definitional"
     return {
@@ -105,6 +107,22 @@ def _merge_entities(llm_entities: list[dict], spacy_entities: list[dict]) -> lis
         seen.add(key)
         merged.append({"text": text, "label": label})
     return merged
+
+
+# Entity types router.md's rule 2 says must always be routed externally "regardless of in-document
+# matches" — a filed figure, a statutory rate, a regulator's position, a market fact. ORG is
+# deliberately excluded even though rule 2 lists it: a bare company-name mention is far weaker
+# signal than a number/date/legal reference, and including it would make the fast path fire on
+# most sentences in a business document, defeating its purpose.
+_GROUNDABLE_ENTITY_LABELS = {"MONEY", "PERCENT", "DATE", "LAW"}
+
+
+def _has_groundable_entity(entities: list[dict]) -> bool:
+    """True if any tagged entity is a type router.md's rule 2 says needs external grounding no
+    matter how well the document agrees with itself. Used to keep the direct_claim fast path
+    (see below) from silently defaulting exactly these claims to "internal" — a hard number, rate,
+    or date is precisely what internal self-consistency cannot establish as true."""
+    return any((e.get("label") or "").strip().upper() in _GROUNDABLE_ENTITY_LABELS for e in entities)
 
 
 def _format_retrieval_context(hits: list[dict]) -> str:
@@ -224,7 +242,7 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
             spacy_entities = await asyncio.to_thread(extract_entities, claim_data["text"])
             merged_entities = _merge_entities(claim_data.get("entities", []) or [], spacy_entities)
 
-            if claim_data.get("_direct"):
+            if claim_data.get("_direct") and not _has_groundable_entity(merged_entities):
                 route = RoutingDecision(
                     claim_id="",
                     route=claim_data.get("scope", "internal"),

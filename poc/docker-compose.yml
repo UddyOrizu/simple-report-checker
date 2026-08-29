@@ -20,7 +20,14 @@ services:
       context: ./backend
     environment:
       DATABASE_URL: postgresql+asyncpg://poc:poc@postgres:5432/claim_checker
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      INTERNAL_VERIFICATION_VOTERS: ${INTERNAL_VERIFICATION_VOTERS:-standard,mini,fino1}
+      HF_TOKEN: ${HF_TOKEN:-}
+      FINO1_MODEL_ID: ${FINO1_MODEL_ID:-}
+      HF_INFERENCE_BASE_URL: ${HF_INFERENCE_BASE_URL:-}
     ports:
       - "8000:8000"
     volumes:

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 import app.db
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "")
+os.environ.setdefault("OPENAI_API_KEY", "")
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+asyncpg://poc:poc@localhost:5433/claim_checker"

@@ -5,11 +5,12 @@ import pytest
 import pytest_asyncio
 import yaml
 
+from app.llm.client import has_llm_credentials
 from app.models import Claim, Document, DocumentChunk, DocumentSection, ExtractedTable
 from app.retrieval.cross_reference import resolve_cross_reference
 
-HAS_API_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
-requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="ANTHROPIC_API_KEY not set — LLM stage is BLOCKED-CREDENTIALS")
+HAS_API_KEY = has_llm_credentials()
+requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="no LLM credentials set for the active LLM_PROVIDER — LLM stage is BLOCKED-CREDENTIALS")
 
 
 async def _make_claim(db_session, *, has_structural_index: bool, requires: list[str]) -> Claim:
