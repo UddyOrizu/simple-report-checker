@@ -4,17 +4,19 @@ from pydantic import BaseModel, Field
 
 
 ClaimType = Literal["statistical", "causal", "comparative", "definitional", "forward_looking", "hedged", "opinion"]
-Scope = Literal["internal", "external", "both"]
 
 class ClaimEntity(BaseModel):
     text: str = Field(..., description="The text of the entity.")
     label: str = Field(..., description="The label of the entity (spaCy-style: MONEY, PERCENT, DATE, ORG, LAW, GPE, etc).")
 
 class ExtractedClaim(BaseModel):
-    claim_id: str
+    """Output shape for the decomposer LLM call. Deliberately excludes claim_id and scope — the
+    real claim_id comes from the DB row on persistence, and the real scope comes from route_claim
+    (router.md), not the decomposer; asking the model to invent either here would spend tokens on
+    a judgment the prompt gives it no basis for and that extract_claims.py discards anyway."""
+
     text: str = Field(..., description="Atomic, self-contained factual claim.")
     entities: List[ClaimEntity] = Field(default_factory=list)
-    scope: Scope = Field(..., description="Whether the claim is about the document's own content (internal) or an outside source (external).")
     claim_type: ClaimType = Field(..., description="The type of claim (statistical, causal, comparative, definitional, forward-looking, hedged, opinion).")
     source_span: str = Field(..., description="Page/paragraph/section locator in the source document.")
     source_chunk_range: Optional[List[int]] = Field(

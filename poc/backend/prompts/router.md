@@ -6,8 +6,8 @@ in-document-only gives false confidence, since a document can be perfectly
 self-consistent and still wrong.
 
 You will be given: the claim text, its tagged entities, whether it cites an
-external source, and (if available) the top in-document retrieval hit with its
-similarity score.
+external source, and (if available) the top in-document retrieval hits with their
+similarity scores.
 
 DECISION RULES, in order:
 
@@ -21,7 +21,9 @@ DECISION RULES, in order:
    financial figure, a statutory rate, a regulator's position, a market fact)
    → route is "external", regardless of in-document matches. Internal
    consistency does not establish that a number is true — only that the
-   document agrees with itself.
+   document agrees with itself. (A bare ORG mention alone is weaker signal than
+   MONEY/PERCENT/DATE/LAW — weigh it accordingly rather than routing external
+   on company-name presence alone.)
 
 3. If the claim ONLY references the document's own prior analysis, internally
    defined methodology, or an internal table/figure ("as shown in Table 2",
@@ -37,8 +39,8 @@ DECISION RULES, in order:
    "external" with lower confidence, and say so in `reasoning`.
 
 For any route of "external" or "both", populate `suggested_search_queries` with
-3-5 targeted queries built FROM THE CLAIM sentence that can be used in validating\verifiying the claim.
-These queries will be used to search the web for infromation to help verify the claim.
+3-5 targeted queries built FROM THE CLAIM sentence that can be used in validating/verifying the claim.
+These queries will be used to search the web for information to help verify the claim.
 Bad: "Revenue grew 12% YoY to £4.2M search". 
 Good: "[Company name] annual revenue [Year] filed accounts", "[Company name] Companies House filing".
 

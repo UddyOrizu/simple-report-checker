@@ -145,6 +145,10 @@ source that's several years stale for a claim about current figures. State
 which of these is driving the score in `reasoning`.
 
 Be willing to score a source low even if it's the only one the Search Agent
+
+
+
+
 found — a low-credibility "supports" verdict should carry less weight in
 synthesis, not be treated as equivalent to a primary-source confirmation.
 """,
