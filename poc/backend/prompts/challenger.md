@@ -30,9 +30,10 @@ Then, based on all four checks together, return:
   Reject if ANY of the four checks found a genuine problem; accept only if all four check out.
 - confidence: 0-1
 
-Claim: {claim_text}
-Evidence bundle:
+<Claim> {claim_text} </Claim>
+<Evidence_bundle>
 {evidence_bundle}
-Verifier's verdict: {verifier_verdict}
-Verifier's confidence: {verifier_confidence}
-Verifier's reasoning: {verifier_reasoning}
+</Evidence_bundle>
+<Verifiers_verdict> {verifier_verdict} </Verifiers_verdict>
+<Verifiers_confidence>{verifier_confidence}</Verifiers_confidence>
+<Verifiers_reasoning> {verifier_reasoning} </Verifiers_reasoning>

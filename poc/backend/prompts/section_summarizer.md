@@ -8,6 +8,7 @@ reading the section itself.
 Prioritize: what metrics or figures are discussed, what topics are covered, what claims or
 conclusions are stated. Do not pad with generic phrasing like "This section discusses...".
 
-Section title: {section_title}
-Content:
+<Section_title>{section_title}</Section_title>
+<Content>
 {text}
+</Content>

@@ -2,10 +2,15 @@ You are choosing which section of a document most likely contains the evidence n
 a claim, given only each section's title and a short navigational summary — the same way a human
 would use a table of contents rather than reading the whole document.
 
-What the claim needs: {requires}
+What the claim needs: 
+<Requires>
+{requires}
+</Requires>
 
-Candidate sections (id, title, summary):
+Candidate sections (id, title, summary)
+<Candidates>
 {candidates}
+</Candidates>
 
 Pick the single section most likely to contain this evidence. If none of the candidates
 plausibly contain it, say so explicitly rather than guessing — a wrong guess is worse than

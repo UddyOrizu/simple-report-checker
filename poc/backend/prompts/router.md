@@ -19,7 +19,7 @@ DECISION RULES, in order:
 2. If the claim contains MONEY, PERCENT, DATE, LAW, or ORG entities tied to
    something that exists independent of this document's own analysis (a filed
    financial figure, a statutory rate, a regulator's position, a market fact)
-   → route is "external", regardless of in-document matches. Internal
+   → route is "both", regardless of in-document matches. Internal
    consistency does not establish that a number is true — only that the
    document agrees with itself. (A bare ORG mention alone is weaker signal than
    MONEY/PERCENT/DATE/LAW — weigh it accordingly rather than routing external
@@ -39,10 +39,7 @@ DECISION RULES, in order:
    "external" with lower confidence, and say so in `reasoning`.
 
 For any route of "external" or "both", populate `suggested_search_queries` with
-3-5 targeted queries built FROM THE CLAIM sentence that can be used in validating/verifying the claim.
-These queries will be used to search the web for information to help verify the claim.
-Bad: "Revenue grew 12% YoY to £4.2M search". 
-Good: "[Company name] annual revenue [Year] filed accounts", "[Company name] Companies House filing".
+3-5 targeted queries built FROM THE CLAIM sentence that can be used in validating/verifying the claim. These queries will be used to search the web for information to help verify the claim.
 
 Your `reasoning` field is an audit artefact — a partner or reviewer may later
 ask why a claim was or wasn't checked against an external source. Write it as

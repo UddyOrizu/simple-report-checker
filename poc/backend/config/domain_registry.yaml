@@ -1,7 +1,7 @@
 - domain: financial
   claim_type: statistical
   evidence_source: internal_tables
-  verification_method: deterministic
+  verification_method: agent
 - domain: financial
   claim_type: causal
   evidence_source: internal_tables

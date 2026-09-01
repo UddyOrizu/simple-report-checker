@@ -92,6 +92,7 @@ async def _vote_fino1(prompt: str) -> VoteOutcome:
     if not os.getenv("HF_TOKEN"):
         raise MissingCredentialsError("HF_TOKEN is not set — the fino1 voter is BLOCKED-CREDENTIALS")
 
+    
     model = HuggingFace(id=FINO1_MODEL_ID, api_key=os.getenv("HF_TOKEN"), base_url=HF_INFERENCE_BASE_URL)
     agent = Agent(model=model, markdown=False)
     full_prompt = prompt + _JSON_OUTPUT_SUFFIX
