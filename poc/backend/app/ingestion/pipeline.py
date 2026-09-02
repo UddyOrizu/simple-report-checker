@@ -156,6 +156,7 @@ async def _persist(
         document.page_count = page_count
         document.has_structural_index = sections is not None
         document.status = "ingested"
+        document.failed_stage = None
 
         section_id_by_order: dict[int, object] = {}
         if sections:
@@ -287,4 +288,5 @@ async def finalize_pdf_structure(
         document.page_count = page_count
         document.has_structural_index = sections is not None
         document.status = "ingested"
+        document.failed_stage = None
         await session.commit()

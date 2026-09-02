@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { getDocument, listClaims } from "../api/client";
+import { getDocument, listClaims, resumeDocument } from "../api/client";
 import { ClaimReviewPanel } from "../components/ClaimReviewPanel";
 import { DocumentViewer } from "../components/DocumentViewer";
 import { ProgressBar } from "../components/ProgressBar";
@@ -14,7 +14,10 @@ const IN_PROGRESS_STATUSES = new Set(["queued", "processing", "ingested"]);
 
 export function DocumentReview() {
   const { documentId } = useParams<{ documentId: string }>();
+  const queryClient = useQueryClient();
   const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
   const events = useDocumentEvents(documentId ?? null);
 
   const { data: document, isLoading } = useQuery({
@@ -34,6 +37,20 @@ export function DocumentReview() {
     enabled: !!documentId && !inProgress,
   });
 
+  const onResume = async () => {
+    if (!documentId) return;
+    setResuming(true);
+    setResumeError(null);
+    try {
+      await resumeDocument(documentId);
+      await queryClient.invalidateQueries({ queryKey: ["document", documentId] });
+    } catch (err) {
+      setResumeError(err instanceof Error ? err.message : "Resume failed.");
+    } finally {
+      setResuming(false);
+    }
+  };
+
   if (isLoading || !document) return <p className="text-gray-500 p-8">Loading…</p>;
 
   return (
@@ -52,7 +69,17 @@ export function DocumentReview() {
       {inProgress ? (
         <ProgressBar events={events} />
       ) : document.status === "failed" ? (
-        <p className="text-red-600">Processing failed for this document.</p>
+        <div className="flex items-center gap-3">
+          <p className="text-red-600">Processing failed for this document.</p>
+          <button
+            className="border rounded px-3 py-1 text-sm disabled:opacity-50"
+            onClick={onResume}
+            disabled={resuming}
+          >
+            {resuming ? "Resuming…" : "Resume processing"}
+          </button>
+          {resumeError && <p className="text-red-600 text-xs">{resumeError}</p>}
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-6 items-start">
           <div>

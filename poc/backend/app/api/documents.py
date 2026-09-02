@@ -85,6 +85,31 @@ async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = 
     return {"id": str(document_id), "status": "queued"}
 
 
+@router.post("/documents/{document_id}/resume", status_code=202)
+async def resume_document(document_id: uuid.UUID, background_tasks: BackgroundTasks) -> dict:
+    """Re-invokes process_document for a document whose processing stopped before reaching
+    "complete" — whether it failed with an explicit error or was silently killed (server
+    restart, crash) partway through and never got to update its status at all. process_document
+    is itself resume-aware: it skips ingestion once already done, skips chunks claim extraction
+    already got through, and skips claims that already have a verdict — so this is safe to call
+    on a document that's further along than its status alone suggests."""
+    async with async_session() as session:
+        document = await session.get(Document, document_id)
+        if document is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        if document.status == "complete":
+            raise HTTPException(status_code=409, detail="Document has already completed processing.")
+        storage_path = document.storage_path
+        # Move off "failed" immediately so the UI reflects the retry right away rather than
+        # showing "failed" until the background task's first status write — failed_stage (read by
+        # process_document to decide where to resume from) is left untouched.
+        document.status = "processing"
+        await session.commit()
+
+    background_tasks.add_task(process_document, document_id, storage_path)
+    return {"id": str(document_id), "status": "processing"}
+
+
 @router.get("/documents")
 async def list_documents(limit: int = 20, offset: int = 0, status: str | None = None) -> list[dict]:
     """History list — newest first, each with a claim-verdict summary computed at query time."""

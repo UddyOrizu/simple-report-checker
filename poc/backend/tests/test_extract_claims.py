@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.agents.extract_claims import _has_groundable_entity, direct_claim, extract_claims_for_document, split_sentences
 from app.events.broadcaster import broadcaster
-from app.models import Claim, Document, DocumentChunk
+from app.models import Claim, Document, DocumentChunk, DocumentSection
 
 
 def _registry():
@@ -113,5 +113,57 @@ async def test_decomposable_sentence_yields_no_claims_without_an_api_key(db_sess
     assert not os.environ.get("ANTHROPIC_API_KEY")
 
     claims = await extract_claims_for_document(db_session, complex_sentence_document, _registry())
+
+    assert claims == []
+
+
+@pytest_asyncio.fixture
+async def boilerplate_chunk_document(db_session):
+    """A chunk that's skipped for a reason unrelated to LLM availability (its section is
+    boilerplate) — exercises the resume bookkeeping without needing a real embeddings call, unlike
+    the other fixtures here whose chunks actually produce a claim."""
+    document = Document(filename="x.docx", file_type="docx", storage_path="x", status="ingested")
+    db_session.add(document)
+    await db_session.flush()
+
+    section = DocumentSection(document_id=document.id, title="Disclaimer", order_index=0)
+    db_session.add(section)
+    await db_session.flush()
+
+    chunk = DocumentChunk(
+        document_id=document.id,
+        section_id=section.id,
+        chunk_type="paragraph",
+        chunk_text="This report is provided as-is and does not constitute advice.",
+        context_capsule="Report > Disclaimer",
+    )
+    db_session.add(chunk)
+    await db_session.flush()
+    return document.id
+
+
+async def test_boilerplate_chunk_is_marked_claims_extracted_without_producing_claims(
+    db_session, boilerplate_chunk_document
+):
+    claims = await extract_claims_for_document(db_session, boilerplate_chunk_document, _registry())
+    assert claims == []
+
+    chunk = (
+        await db_session.execute(select(DocumentChunk).where(DocumentChunk.document_id == boilerplate_chunk_document))
+    ).scalars().one()
+    assert chunk.claims_extracted is True
+
+
+async def test_resumed_extraction_skips_a_chunk_already_marked_claims_extracted(db_session, simple_sentence_document):
+    """A chunk left over from an interrupted run that already got through claim extraction (e.g.
+    the crash happened on a later chunk) must not be reprocessed on resume — reprocessing it would
+    decompose the same sentence again and persist a duplicate claim."""
+    chunk = (
+        await db_session.execute(select(DocumentChunk).where(DocumentChunk.document_id == simple_sentence_document))
+    ).scalars().one()
+    chunk.claims_extracted = True
+    await db_session.commit()
+
+    claims = await extract_claims_for_document(db_session, simple_sentence_document, _registry())
 
     assert claims == []

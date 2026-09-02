@@ -18,6 +18,7 @@ class Document(Base):
     storage_path: Mapped[str] = mapped_column(String, nullable=False)
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     status: Mapped[str] = mapped_column(String, nullable=False, server_default="queued")
+    failed_stage: Mapped[str | None] = mapped_column(String)
     page_count: Mapped[int | None] = mapped_column(Integer)
     has_structural_index: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

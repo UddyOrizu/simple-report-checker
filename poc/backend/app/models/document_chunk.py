@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Float, ForeignKey, Integer, String, text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
@@ -24,3 +24,7 @@ class DocumentChunk(Base):
     char_end: Mapped[int | None] = mapped_column(Integer)
     ocr_confidence: Mapped[float | None] = mapped_column(Float)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
+    # Set once claim extraction has been attempted for this chunk (whether or not it produced any
+    # claims) — lets a resumed extraction run skip chunks a prior, interrupted attempt already
+    # got through, rather than re-decomposing and re-routing every sentence from page one.
+    claims_extracted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

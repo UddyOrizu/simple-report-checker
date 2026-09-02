@@ -149,8 +149,10 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
     """Walks every chunk of a document (prose and tables alike), splits prose into sentences,
     decomposes each sentence/table-row into claims, classifies each claim's domain, retrieves
     in-document evidence and routes each claim's verification scope, and persists the results.
-    Publishes a claim_extracted event per claim, and commits incrementally per chunk so a run
-    killed partway through a large document doesn't lose everything extracted so far.
+    Publishes a claim_extracted event per claim, and commits incrementally per chunk — marking
+    each chunk claims_extracted afterwards — so a run killed partway through a large document
+    doesn't lose everything extracted so far, and a resumed call only queries chunks (above) not
+    yet marked, rather than re-decomposing the whole document.
 
     A simple single-fact sentence skips both the decomposition and routing LLM calls (the
     direct_claim heuristic); a sentence flagged is_opinion_or_unverifiable by the decomposer also
@@ -159,7 +161,13 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
     ANTHROPIC_API_KEY/OPENAI_API_KEY is missing: LLM-dependent claims for that sentence are
     skipped rather than retried.
     """
-    chunks = (await session.execute(select(DocumentChunk).where(DocumentChunk.document_id == document_id))).scalars().all()
+    chunks = (
+        await session.execute(
+            select(DocumentChunk).where(
+                DocumentChunk.document_id == document_id, DocumentChunk.claims_extracted.is_(False)
+            )
+        )
+    ).scalars().all()
 
     persisted: list[Claim] = []
     embedding_service = EmbeddingService()
@@ -179,6 +187,8 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
         if _is_boilerplate_section(section):
             preceding_sentence = None
             prev_chunk_claim_embeddings = []
+            chunk.claims_extracted = True
+            await session.commit()
             continue
 
         is_table = chunk.chunk_type == "table"
@@ -222,6 +232,8 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
         claim_data_list = [c for group in decomposed if group is not None for c in group]
         if not claim_data_list:
             prev_chunk_claim_embeddings = []
+            chunk.claims_extracted = True
+            await session.commit()
             continue
 
         claim_texts = [c["text"] for c in claim_data_list]
@@ -312,6 +324,7 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
                 },
             )
 
+        chunk.claims_extracted = True
         await session.commit()
 
     return persisted

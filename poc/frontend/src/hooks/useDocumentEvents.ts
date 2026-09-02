@@ -31,6 +31,8 @@ const NAMED_EVENT_TYPES = [
   "claim_extracted",
   "claim_verified",
   "verification_complete",
+  "ingest_failed",
+  "processing_failed",
 ];
 
 /** Subscribes to a document's SSE stream (Phase 7.2) and updates claim state incrementally as
@@ -67,7 +69,7 @@ export function useDocumentEvents(documentId: string | null): UseDocumentEventsR
       if (parsed.event === "claim_verified") {
         setClaims((prev) => [...prev, parsed as ClaimVerifiedEvent]);
       }
-      if (parsed.event === "verification_complete") {
+      if (parsed.event === "verification_complete" || parsed.event === "ingest_failed" || parsed.event === "processing_failed") {
         setStatus("closed");
         source.close();
       }

@@ -42,6 +42,15 @@ export async function reverifyClaim(claimId: string): Promise<{ claim_id: string
   return response.json();
 }
 
+export async function resumeDocument(documentId: string): Promise<{ id: string; status: string }> {
+  const response = await fetch(`${BASE}/documents/${documentId}/resume`, { method: "POST" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(body.detail ?? `${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
 export async function uploadDocument(file: File): Promise<{ id: string; status: string }> {
   const formData = new FormData();
   formData.append("file", file);
