@@ -38,7 +38,14 @@ dependencies = [
     "huggingface_hub>=0.26",
     "exa-py>=2.22.0",
     "truststore",
+    "mammoth>=1.8",
 ]
+
+[project.optional-dependencies]
+# PDF -> Markdown conversion (app/ingestion/converters/pdf_to_markdown.py). Heavy: torch + surya
+# layout/OCR models (several GB, downloaded on first use), and pins Pillow<11 / regex<2025.
+# GPL-3.0 licensed. Without it, PDFs fall back to the pdfplumber/OCR parser.
+marker = ["marker-pdf==0.3.2"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -7,3 +7,15 @@ progress_event_every_n_pages: 5      # how often ingest_progress events fire on 
 section_summary_max_words: 150       # hard cap on every generated section summary, at any recursion level
 section_summary_direct_word_limit: 3000  # sections at or below this word count get summarized in a single LLM call;
                                           # above this, summarized hierarchically — see Phase 2.5.1
+
+# Convert uploads to Markdown before parsing. Markdown headings give the structural index a real
+# heading hierarchy (levels), which vectorless retrieval navigates as a table of contents.
+markdown_conversion:
+  pdf: true                    # marker-pdf 0.3.2 (optional extra: pip install -e ".[marker]");
+                               # falls back to the pdfplumber/OCR parser when marker isn't installed
+  docx: true                   # mammoth + markdownify; false = the python-docx parser
+  save_markdown: false         # also write the raw converter output next to the upload as <file>.md
+                               # (debugging aid — documents.markdown already stores the rendered Markdown)
+  marker_batch_multiplier: 1   # raise on a GPU with spare VRAM for faster conversion
+  marker_ocr_all_pages: false  # true forces OCR even on pages with a native text layer
+  marker_langs: null           # e.g. ["English"]; null = marker's default

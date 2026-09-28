@@ -4,8 +4,10 @@ for standalone CLI use) and the real upload endpoint's background processing (Ph
 row already exists by the time this runs).
 """
 
+import asyncio
 import hashlib
 import json
+import logging
 import os
 import time
 import uuid
@@ -16,13 +18,18 @@ from sqlalchemy import update
 
 from app.db import async_session
 from app.ingestion.chunker import chunk_document
+from app.ingestion.converters.docx_to_markdown import docx_to_markdown
+from app.ingestion.converters.pdf_to_markdown import marker_available, pdf_to_markdown
 from app.ingestion.parsers.docx_parser import parse_docx
+from app.ingestion.parsers.markdown_parser import elements_to_markdown, parse_markdown
 from app.ingestion.parsers.pdf_parser import parse_pdf
 from app.ingestion.section_summarizer import generate_all_section_summaries
 from app.ingestion.structural_index import build_structural_index
 from app.llm.client import MissingCredentialsError
 from app.models import Document, DocumentChunk, DocumentSection, ExtractedTable, PipelineRun
 from app.ingestion.sentence_level_chunker import EmbeddingService
+
+logger = logging.getLogger(__name__)
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "ingestion.yaml")
 
@@ -42,19 +49,52 @@ def estimate_docx_page_count(elements: list[dict]) -> int:
     return max(1, round(word_count / DOCX_WORDS_PER_PAGE))
 
 
+def uses_marker_for_pdf(config: dict) -> bool:
+    """PDFs go through marker only when it's both enabled in config and actually installed — it's
+    an optional extra, and a missing install falls back to the pdfplumber/OCR parser rather than
+    failing the upload."""
+    return config.get("markdown_conversion", {}).get("pdf", False) and marker_available()
+
+
+def _save_markdown(path: str, markdown: str, config: dict) -> None:
+    if config.get("markdown_conversion", {}).get("save_markdown", False):
+        with open(f"{path}.md", "w", encoding="utf-8") as f:
+            f.write(markdown)
+
+
 def parse_document(path: str, config: dict) -> tuple[list[dict], int, str]:
+    """Sync and CPU-heavy (marker runs layout/OCR models) — async callers should run it via
+    asyncio.to_thread, as run_ingestion does."""
+    conversion = config.get("markdown_conversion", {})
     ext = os.path.splitext(path)[1].lower()
     if ext == ".docx":
-        elements = parse_docx(path)
+        if conversion.get("docx", False):
+            markdown = docx_to_markdown(path)
+            _save_markdown(path, markdown, config)
+            elements = parse_markdown(markdown)
+        else:
+            elements = parse_docx(path)
         elements = _clean_parsed_elements(elements)
         return elements, estimate_docx_page_count(elements), "docx"
     if ext == ".pdf":
-        elements = parse_pdf(path, config)
+        if uses_marker_for_pdf(config):
+            markdown = pdf_to_markdown(path, config)
+            _save_markdown(path, markdown, config)
+            elements = parse_markdown(markdown, paginated=True)
+        else:
+            if conversion.get("pdf", False):
+                logger.warning("markdown_conversion.pdf is enabled but marker-pdf isn't installed — using the native PDF parser")
+            elements = parse_pdf(path, config)
         elements = _clean_parsed_elements(elements)
         with fitz.open(path) as doc:
             page_count = len(doc)
         return elements, page_count, "pdf"
     raise ValueError(f"Unsupported file type: {ext}")
+
+
+def section_content(section: dict, elements: list[dict]) -> str:
+    """The section's own body as Markdown — what vectorless retrieval reads and quotes from."""
+    return elements_to_markdown(elements[section["start_index"] : section["end_index"]])
 
 
 def document_title(elements: list[dict], filename: str) -> str:
@@ -88,7 +128,7 @@ async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict
     has_structural_index/status) and writes a pipeline_runs row."""
     start = time.monotonic()
 
-    elements, page_count, file_type = parse_document(path, config)
+    elements, page_count, file_type = await asyncio.to_thread(parse_document, path, config)
     title = document_title(elements, os.path.basename(path))
     chunks = chunk_document(elements, document_title=title)
     sections = build_structural_index(page_count, elements, config)
@@ -189,21 +229,14 @@ async def _persist(
         document.file_type = file_type
         document.page_count = page_count
         document.has_structural_index = sections is not None
+        document.markdown = elements_to_markdown(elements)
         document.status = "ingested"
         document.failed_stage = None
 
         section_id_by_order: dict[int, object] = {}
         if sections:
             for section in sections:
-                row = DocumentSection(
-                    document_id=document_id,
-                    title=section["title"],
-                    is_pseudo_section=section["is_pseudo_section"],
-                    summary=section.get("summary"),
-                    order_index=section["order_index"],
-                    page_start=section["page_start"],
-                    page_end=section["page_end"],
-                )
+                row = _section_row(document_id, section, elements, section.get("summary"), section_id_by_order)
                 session.add(row)
                 await session.flush()
                 section_id_by_order[section["order_index"]] = row.id
@@ -268,6 +301,26 @@ async def _persist(
         return str(pipeline_run.id)
 
 
+def _section_row(
+    document_id: uuid.UUID, section: dict, elements: list[dict], summary: str | None, section_id_by_order: dict[int, object]
+) -> DocumentSection:
+    """Sections are flushed in order_index order, so a section's parent (always earlier in the
+    document) already has its id in `section_id_by_order` by the time its children are built."""
+    parent_order_index = section.get("parent_order_index")
+    return DocumentSection(
+        document_id=document_id,
+        title=section["title"],
+        is_pseudo_section=section["is_pseudo_section"],
+        summary=summary,
+        order_index=section["order_index"],
+        page_start=section["page_start"],
+        page_end=section["page_end"],
+        level=section.get("level"),
+        parent_id=section_id_by_order.get(parent_order_index) if parent_order_index is not None else None,
+        content=section_content(section, elements),
+    )
+
+
 async def finalize_pdf_structure(
     document_id: uuid.UUID, path: str, page_count: int, config: dict, elements: list[dict] | None = None
 ) -> None:
@@ -286,20 +339,14 @@ async def finalize_pdf_structure(
     sections = build_structural_index(page_count, elements, config)
 
     async with async_session() as session:
+        section_id_by_order: dict[int, object] = {}
         if sections:
             summaries, _, _ = await summarize_sections(sections, elements, config)
             for section in sections:
-                row = DocumentSection(
-                    document_id=document_id,
-                    title=section["title"],
-                    is_pseudo_section=section["is_pseudo_section"],
-                    summary=summaries.get(section["order_index"]),
-                    order_index=section["order_index"],
-                    page_start=section["page_start"],
-                    page_end=section["page_end"],
-                )
+                row = _section_row(document_id, section, elements, summaries.get(section["order_index"]), section_id_by_order)
                 session.add(row)
                 await session.flush()
+                section_id_by_order[section["order_index"]] = row.id
 
                 page_start = section["page_start"] if section["page_start"] is not None else 0
                 page_end = section["page_end"] if section["page_end"] is not None else 10**9
@@ -321,6 +368,7 @@ async def finalize_pdf_structure(
         document = await session.get(Document, document_id)
         document.page_count = page_count
         document.has_structural_index = sections is not None
+        document.markdown = elements_to_markdown(elements)
         document.status = "ingested"
         document.failed_stage = None
         await session.commit()

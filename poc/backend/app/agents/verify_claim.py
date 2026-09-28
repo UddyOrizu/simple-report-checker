@@ -16,6 +16,7 @@ from app.models import AgentTrace, Claim, Evidence, Verdict
 from app.retrieval.chunk_sweep import build_chunk_sweep_bundle
 from app.retrieval.cross_reference import resolve_cross_reference
 from app.retrieval.internal_index import lookup_internal_evidence, semantic_internal_lookup
+from app.retrieval.vectorless import find_section_evidence
 from app.schemas.claim import ExternalEvidence, ExternalEvidenceList, SourceCandidateList, SourceCredibilityScoreList
 
 from agno.agent import Agent
@@ -155,12 +156,17 @@ synthesis, not be treated as equivalent to a primary-source confirmation.
 )
 
 async def _gather_internal_evidence(session: AsyncSession, claim: Claim) -> list[Evidence]:
-    """Escalating cost ladder: exact keyword lookup first (5.1) — free; then embedding search
-    over `claim.requires` (5.1's semantic counterpart) when the exact lookup misses, since a
-    requires-phrase not sharing literal vocabulary with its evidence is a common failure mode for
-    the word-overlap check alone; only then pay for the LLM-backed cross-reference navigator
-    (5.1.1), the most expensive of the three, for when evidence exists but lives outside the
-    claim's own section entirely."""
+    """Vectorless retrieval (app.retrieval.vectorless) runs first: it navigates the section tree
+    and returns quotes verified against the source text, each cited to its section path and page —
+    the strongest evidence this ladder can produce, so it's tried before the cheaper lookups rather
+    than only when they miss. If it finds nothing verifiable (or is disabled in
+    config/retrieval.yaml), the ladder continues through exact keyword lookup (5.1), embedding
+    search over `claim.requires`, and finally the cross-reference resolver (5.1.1), which also
+    catches explicit "see Table 2" pointers."""
+    evidence = await find_section_evidence(session, claim)
+    if evidence:
+        return evidence
+
     evidence = await lookup_internal_evidence(session, claim)
     if evidence:
         return evidence
@@ -299,10 +305,10 @@ async def _verify_internal_claim_via_vote_panel(session: AsyncSession, claim: Cl
     an adversarial pair needs one agent to accept or reject the other's specific reasoning, while a
     vote panel's agents never see each other's answers at all.
 
-    Evidence gathering escalates through direct lookup, semantic search, and the cross-reference
-    navigator (_gather_internal_evidence) before falling back to the most expensive tier — handing
-    every chunk in the document (the claim's own origin chunk redacted so a voter can't "verify"
-    the claim by reading it back to itself) to the panel directly — only when all three cheaper
+    Evidence gathering tries vectorless section retrieval first, then direct lookup, semantic
+    search, and the cross-reference resolver (_gather_internal_evidence), before falling back to
+    handing every chunk in the document (the claim's own origin chunk redacted so a voter can't
+    "verify" the claim by reading it back to itself) to the panel directly — only when all four
     tiers found nothing at all."""
     require_llm_credentials()
 

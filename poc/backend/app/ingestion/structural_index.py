@@ -24,25 +24,36 @@ def _page_range(body: list[dict]) -> tuple[int | None, int | None]:
 
 
 def sections_from_headings(elements: list[dict]) -> list[dict]:
-    """Group elements into one section per heading, spanning up to the next heading."""
+    """Group elements into one section per heading, spanning up to the next heading (of any
+    level — a section's own body stops where its first subsection starts). Each section also
+    records its heading `level` and `parent_order_index`: the nearest preceding section with a
+    shallower level, which turns the flat list into a tree for vectorless retrieval to navigate.
+    Headings without a level (the pdfplumber parser's font-size headings) are all level 1."""
     heading_indices = [i for i, e in enumerate(elements) if e["type"] == "heading"]
 
     sections = []
+    open_sections: list[tuple[int, int]] = []  # (level, order_index) stack of current ancestors
     for order_index, h_idx in enumerate(heading_indices):
         start = h_idx + 1
         end = heading_indices[order_index + 1] if order_index + 1 < len(heading_indices) else len(elements)
-        page_start, page_end = _page_range(elements[start:end])
+        page_start, page_end = _page_range(elements[h_idx:end])
+        level = max(1, elements[h_idx].get("level") or 1)
+        while open_sections and open_sections[-1][0] >= level:
+            open_sections.pop()
         sections.append(
             {
                 "title": elements[h_idx]["text"],
                 "is_pseudo_section": False,
                 "order_index": order_index,
+                "level": level,
+                "parent_order_index": open_sections[-1][1] if open_sections else None,
                 "page_start": page_start,
                 "page_end": page_end,
                 "start_index": start,
                 "end_index": end,
             }
         )
+        open_sections.append((level, order_index))
     return sections
 
 
@@ -73,6 +84,8 @@ def pseudo_sections_from_topic_shift(elements: list[dict], sensitivity: float) -
                 "title": None,
                 "is_pseudo_section": True,
                 "order_index": order_index,
+                "level": 1,
+                "parent_order_index": None,
                 "page_start": page_start,
                 "page_end": page_end,
                 "start_index": start,

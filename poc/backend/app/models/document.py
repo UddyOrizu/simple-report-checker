@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, Integer, String, func, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,4 +21,7 @@ class Document(Base):
     failed_stage: Mapped[str | None] = mapped_column(String)
     page_count: Mapped[int | None] = mapped_column(Integer)
     has_structural_index: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # Whole-document Markdown rendering — vectorless retrieval's fallback for documents too short
+    # to get a structural index.
+    markdown: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

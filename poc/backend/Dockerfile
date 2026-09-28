@@ -12,8 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Optional extras, e.g. `docker compose build --build-arg INSTALL_EXTRAS=marker` for marker-pdf's
+# PDF -> Markdown conversion (adds torch-based layout/OCR models; see pyproject.toml).
+ARG INSTALL_EXTRAS=""
+
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e . \
+RUN if [ -n "$INSTALL_EXTRAS" ]; then pip install --no-cache-dir -e ".[$INSTALL_EXTRAS]"; else pip install --no-cache-dir -e .; fi \
     && python -m spacy download en_core_web_trf
 
 COPY . .

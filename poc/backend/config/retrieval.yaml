@@ -1,0 +1,9 @@
+# Vectorless RAG (app/retrieval/vectorless.py): navigate the document's section tree by titles +
+# summaries, read the chosen sections, extract verbatim quotes that support/contradict the claim,
+# and keep only quotes that verifiably appear in the source text.
+vectorless_rag:
+  enabled: true
+  max_sections: 2              # sections the navigator may pick per claim
+  max_section_chars: 24000     # cap on text read per chosen section (its subsections included)
+  max_quotes_per_section: 3
+  quote_match_threshold: 0.85  # fuzzy-match score a quote needs against the source to count as verified

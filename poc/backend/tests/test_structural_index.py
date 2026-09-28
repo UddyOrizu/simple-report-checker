@@ -56,3 +56,26 @@ def test_unstructured_document_falls_back_to_pseudo_sections(fixtures_dir):
     assert sections is not None
     assert len(sections) > 1
     assert all(s["is_pseudo_section"] is True for s in sections)
+
+
+def test_nested_headings_record_level_and_parent():
+    elements = [
+        {"type": "heading", "level": 1, "text": "Report", "page_number": 1},
+        {"type": "heading", "level": 2, "text": "Financials", "page_number": 1},
+        {"type": "paragraph", "text": "Intro.", "page_number": 1},
+        {"type": "heading", "level": 3, "text": "Revenue", "page_number": 2},
+        {"type": "paragraph", "text": "Revenue grew.", "page_number": 2},
+        {"type": "heading", "level": 2, "text": "Outlook", "page_number": 3},
+        {"type": "paragraph", "text": "Steady.", "page_number": 3},
+    ]
+
+    sections = build_structural_index(page_count=10, elements=elements, config=_config())
+
+    assert [(s["title"], s["level"], s["parent_order_index"]) for s in sections] == [
+        ("Report", 1, None),
+        ("Financials", 2, 0),
+        ("Revenue", 3, 1),
+        ("Outlook", 2, 0),
+    ]
+    # A heading-only section still gets the page its heading sits on.
+    assert (sections[0]["page_start"], sections[0]["page_end"]) == (1, 1)

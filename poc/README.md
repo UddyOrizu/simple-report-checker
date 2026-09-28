@@ -75,12 +75,42 @@ Claims routed `scope="internal"` are verified by a multi-model "highest vote" pa
 `external`/`both` claims: every configured voter reads the same evidence independently and votes
 `supported`/`contradicted`/`insufficient`; the majority wins, and a tie (including a 3-way split)
 resolves to `disputed` at zero confidence rather than picking one arbitrarily. Evidence is gathered
-through an escalating-cost ladder — exact keyword lookup, then embedding search over the claim's
-`requires` phrases, then an LLM section-navigator — and only when all three find nothing does it
+through a ladder — vectorless section retrieval (verified, cited quotes; see below) first, then
+exact keyword lookup, embedding search over the claim's `requires` phrases, and the cross-reference
+resolver — and only when all four find nothing does it
 fall back to handing the whole document to the panel directly (the claim's own source chunk has its
 wording redacted first, so a voter can't "verify" the claim by reading it back to itself). Financial
 claims that resolve deterministically (exact arithmetic recomputation) skip this panel entirely —
 that path is already exact and free.
+
+### Markdown conversion
+
+Uploads are converted to Markdown before parsing, so the structural index gets a real heading
+hierarchy (`#`/`##`/`###` levels) instead of guessing headings from font sizes:
+
+- **PDF** — [marker-pdf 0.3.2](https://pypi.org/project/marker-pdf/0.3.2/), an optional extra
+  because it pulls in torch plus surya's layout/OCR/table models (several GB, downloaded on first
+  use) and pins older Pillow/regex. Install with `pip install -e ".[marker]"` (or
+  `docker compose build --build-arg INSTALL_EXTRAS=marker`). Without it, PDFs fall back to the
+  pdfplumber/Tesseract parser. marker is GPL-3.0 licensed — check that suits your distribution.
+- **Word (.docx)** — mammoth + markdownify, always available.
+
+Both are toggled in `config/ingestion.yaml` under `markdown_conversion`. The rendered Markdown is
+stored on `documents.markdown`, and each section's own body on `document_sections.content`.
+
+### Vectorless retrieval (section evidence with citations)
+
+`app/retrieval/vectorless.py` finds in-document evidence without embeddings, in the style of
+[simple-vectorless-rag](https://github.com/UddyOrizu/simple-vectorless-rag): the model reads the
+section tree's titles + summaries like a table of contents, picks the sections most likely to hold
+evidence, reads them, and extracts **verbatim** quotes that support or contradict the claim. Every
+quote is checked against the source text (fuzzy on wording, exact on numbers) and dropped if it
+doesn't appear there or is just the claim's own sentence quoted back. Survivors become
+`internal_vectorless` evidence citing the section path and page, e.g.
+`document_section:<id> page 5 section 'Financials > Revenue'`, with the navigator/quoter calls
+traced in `agent_traces`. It runs first in the internal-evidence ladder; exact lookup, embedding
+search and the cross-reference resolver are only tried when it finds nothing verifiable. Tune or
+disable it in `config/retrieval.yaml`.
 
 Inside `docker-compose.yml`, the `api` service talks to Postgres over the Docker network
 (`postgres:5432`); from your host machine (e.g. running `alembic` or `pytest` locally), Postgres
