@@ -23,6 +23,9 @@ def _page_range(body: list[dict]) -> tuple[int | None, int | None]:
     return (min(pages), max(pages)) if pages else (None, None)
 
 
+PREAMBLE_TITLE = "Preamble"
+
+
 def sections_from_headings(elements: list[dict]) -> list[dict]:
     """Group elements into one section per heading, spanning up to the next heading (of any
     level — a section's own body stops where its first subsection starts). Each section also
@@ -32,10 +35,29 @@ def sections_from_headings(elements: list[dict]) -> list[dict]:
     heading_indices = [i for i, e in enumerate(elements) if e["type"] == "heading"]
 
     sections = []
+    # Text before the first heading (an abstract, cover-page text, an untitled opening paragraph)
+    # would otherwise belong to no section at all — invisible to anything navigating the index.
+    if heading_indices and any(_element_chars(e) for e in elements[: heading_indices[0]]):
+        page_start, page_end = _page_range(elements[: heading_indices[0]])
+        sections.append(
+            {
+                "title": PREAMBLE_TITLE,
+                "is_pseudo_section": True,
+                "order_index": 0,
+                "level": 1,
+                "parent_order_index": None,
+                "page_start": page_start,
+                "page_end": page_end,
+                "start_index": 0,
+                "end_index": heading_indices[0],
+            }
+        )
+
     open_sections: list[tuple[int, int]] = []  # (level, order_index) stack of current ancestors
-    for order_index, h_idx in enumerate(heading_indices):
+    for position, h_idx in enumerate(heading_indices):
+        order_index = len(sections)
         start = h_idx + 1
-        end = heading_indices[order_index + 1] if order_index + 1 < len(heading_indices) else len(elements)
+        end = heading_indices[position + 1] if position + 1 < len(heading_indices) else len(elements)
         page_start, page_end = _page_range(elements[h_idx:end])
         level = max(1, elements[h_idx].get("level") or 1)
         while open_sections and open_sections[-1][0] >= level:
@@ -57,6 +79,64 @@ def sections_from_headings(elements: list[dict]) -> list[dict]:
         )
         open_sections.append((level, order_index))
     return sections
+
+
+def _element_chars(element: dict) -> int:
+    if element["type"] == "table":
+        return sum(len(str(cell or "")) + 3 for row in element.get("data") or [] for cell in row)
+    return len(element.get("text", "").strip())
+
+
+def _partition(start: int, end: int, elements: list[dict], max_chars: int) -> list[tuple[int, int]]:
+    """Greedily packs elements [start, end) into consecutive runs of at most `max_chars`, cutting
+    only between elements. A single element over the limit stays whole in a run of its own."""
+    parts: list[tuple[int, int]] = []
+    part_start, size = start, 0
+    for i in range(start, end):
+        chars = _element_chars(elements[i])
+        if i > part_start and size + chars > max_chars:
+            parts.append((part_start, i))
+            part_start, size = i, 0
+        size += chars
+    parts.append((part_start, end))
+    return parts
+
+
+def split_long_sections(sections: list[dict], elements: list[dict], max_chars: int | None) -> list[dict]:
+    """Splits any section whose own body exceeds `max_chars` into consecutive parts titled
+    "<title> (part k of n)", so no section is too long to be read in full. Every part keeps the
+    original's level and parent (continuation parts are siblings, flagged pseudo), subsections
+    stay under part 1, and order_index / parent_order_index are renumbered to match."""
+    if not max_chars:
+        return sections
+
+    result: list[dict] = []
+    new_order_of: dict[int, int] = {}
+    for section in sections:
+        parts = _partition(section["start_index"], section["end_index"], elements, max_chars)
+        parent = section["parent_order_index"]
+        for n, (start, end) in enumerate(parts):
+            if n == 0:
+                new_order_of[section["order_index"]] = len(result)
+            title = section["title"]
+            if len(parts) > 1:
+                title = f"{title or 'Untitled section'} (part {n + 1} of {len(parts)})"
+            page_start, page_end = _page_range(elements[start:end])
+            result.append(
+                {
+                    **section,
+                    "title": title,
+                    "is_pseudo_section": section["is_pseudo_section"] or n > 0,
+                    "order_index": len(result),
+                    # Parents always come earlier in the document, so they're already renumbered.
+                    "parent_order_index": new_order_of[parent] if parent is not None else None,
+                    "page_start": section["page_start"] if n == 0 else page_start,
+                    "page_end": page_end if len(parts) > 1 else section["page_end"],
+                    "start_index": start,
+                    "end_index": end,
+                }
+            )
+    return result
 
 
 def pseudo_sections_from_topic_shift(elements: list[dict], sensitivity: float) -> list[dict]:
@@ -104,6 +184,7 @@ def build_structural_index(page_count: int, elements: list[dict], config: dict) 
 
     headings = [e for e in elements if e["type"] == "heading"]
     if headings:
-        return sections_from_headings(elements)
-
-    return pseudo_sections_from_topic_shift(elements, sensitivity=config["topic_shift_sensitivity"])
+        sections = sections_from_headings(elements)
+    else:
+        sections = pseudo_sections_from_topic_shift(elements, sensitivity=config["topic_shift_sensitivity"])
+    return split_long_sections(sections, elements, config.get("max_section_chars"))

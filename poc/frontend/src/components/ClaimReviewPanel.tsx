@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getClaim, reverifyClaim } from "../api/client";
+import { CitedEvidence } from "./CitedEvidence";
 import { LinkifiedText } from "./LinkifiedText";
 import { SEVERITY_STYLES, VERDICT_STYLES } from "./verdictColors";
 
@@ -189,12 +190,18 @@ export function ClaimReviewPanel({ claimId }: ClaimReviewPanelProps) {
           <ul className="space-y-1">
             {claim.evidence.map((e) => (
               <li key={e.id} className="text-sm bg-gray-50 border rounded p-2">
-                <span className="text-xs text-gray-500">
-                  [{e.source_type}] <LinkifiedText text={e.source_ref} />
-                </span>
-                <p>
-                  <LinkifiedText text={e.content_snippet} />
-                </p>
+                {e.quote ? (
+                  <CitedEvidence evidence={e} documentId={claim.document_id} />
+                ) : (
+                  <>
+                    <span className="text-xs text-gray-500">
+                      [{e.source_type}] <LinkifiedText text={e.source_ref} />
+                    </span>
+                    <p>
+                      <LinkifiedText text={e.content_snippet} />
+                    </p>
+                  </>
+                )}
               </li>
             ))}
           </ul>

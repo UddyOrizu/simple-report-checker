@@ -10,6 +10,7 @@ from app.retrieval.vectorless import (
     _build_tree,
     _outline,
     find_section_evidence,
+    split_text,
 )
 
 CONFIG = {
@@ -108,6 +109,9 @@ async def test_returns_verified_cited_quotes_and_drops_fabricated_and_self_citat
     assert item.source_ref == f"document_section:{sections['revenue'].id} page 5 section 'Financials > Revenue'"
     assert item.content_snippet.startswith('SUPPORTS: "Revenue for FY24 was $112M')
     assert item.authority_score == 1.0
+    # Structured citation fields, for the UI to link and highlight without parsing source_ref.
+    assert (item.section_id, item.section_path, item.page_number) == (sections["revenue"].id, "Financials > Revenue", 5)
+    assert (item.quote, item.stance) == ("Revenue for FY24 was $112M, compared with $100M in FY23.", "supports")
 
     quoter_prompt = prompts[1]
     assert "Audited figures follow." in quoter_prompt and "| APAC | $40M |" in quoter_prompt
@@ -146,6 +150,50 @@ async def test_document_without_sections_quotes_from_whole_markdown(db_session):
 
     assert len(prompts) == 1  # straight to quoting — no outline to navigate
     assert [e.source_ref for e in evidence] == [f"document:{document.id} section 'memo.docx'"]
+
+
+def test_split_text_reads_everything_in_bounded_parts():
+    text = "\n\n".join(f"Paragraph {i} " + "x" * 80 for i in range(10)) + "\n\n" + "y" * 250
+
+    parts = split_text(text, max_chars=200)
+
+    assert all(len(p) <= 200 for p in parts)
+    rejoined = "".join(p.replace("\n\n", "") for p in parts)
+    assert rejoined == text.replace("\n\n", "")  # nothing dropped, nothing duplicated
+
+
+async def test_long_document_is_read_in_parts_not_truncated(db_session, caplog):
+    body = "\n\n".join(f"Filler paragraph {i} about unrelated operations." for i in range(40))
+    document = Document(filename="long.docx", file_type="docx", storage_path="x", status="ingested",
+                        markdown=f"{body}\n\nHeadcount was 250 at year end.")
+    db_session.add(document)
+    await db_session.flush()
+    origin = DocumentChunk(document_id=document.id, chunk_type="paragraph", chunk_text="Headcount grew 25%.")
+    db_session.add(origin)
+    await db_session.flush()
+    claim = Claim(document_id=document.id, chunk_id=origin.id, claim_text="Headcount grew 25%.", source_span="Headcount grew 25%.",
+                  claim_type="statistical", scope="internal", requires=["headcount"])
+    db_session.add(claim)
+    await db_session.flush()
+
+    seen_texts: list[str] = []
+
+    async def fake(prompt, output_schema, tier="standard"):
+        seen_texts.append(prompt)
+        found = "Headcount was 250 at year end." in prompt
+        return QuoteExtraction(quotes=[ExtractedQuote(quote="Headcount was 250 at year end.", stance="context", explanation="end figure")] if found else [])
+
+    with patch("app.retrieval.vectorless.llm_call_structured", side_effect=fake):
+        evidence = await find_section_evidence(db_session, claim, {**CONFIG, "max_section_chars": 400, "max_reads_per_claim": 50})
+        assert len(seen_texts) > 1  # read in several parts
+        assert [e.quote for e in evidence] == ["Headcount was 250 at year end."]  # found in the last part
+        assert evidence[0].section_path == "long.docx"
+
+        seen_texts.clear()
+        with caplog.at_level("WARNING"):
+            capped = await find_section_evidence(db_session, claim, {**CONFIG, "max_section_chars": 400, "max_reads_per_claim": 2})
+    assert len(seen_texts) == 2 and capped == []
+    assert "reading the first 2" in caplog.text  # the cap is reported, never silent
 
 
 async def test_disabled_makes_no_llm_calls(db_session):

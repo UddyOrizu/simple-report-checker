@@ -4,6 +4,8 @@
 vectorless_rag:
   enabled: true
   max_sections: 2              # sections the navigator may pick per claim
-  max_section_chars: 24000     # cap on text read per chosen section (its subsections included)
+  max_section_chars: 24000     # text per quoting call; a longer read (a section with its subsections, or a
+                               # whole short document) is split into parts, each read in full
+  max_reads_per_claim: 6       # cap on quoting calls per claim across all parts; anything past it is logged
   max_quotes_per_section: 3
   quote_match_threshold: 0.85  # fuzzy-match score a quote needs against the source to count as verified

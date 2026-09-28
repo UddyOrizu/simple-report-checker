@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, func, text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,3 +20,12 @@ class Evidence(Base):
     content_snippet: Mapped[str | None] = mapped_column(String)
     authority_score: Mapped[float | None] = mapped_column(Float)
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Structured citation for in-document evidence (set by vectorless retrieval), so the UI can
+    # link to the cited section/page and highlight the exact quote rather than parse source_ref.
+    section_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document_sections.id", ondelete="SET NULL")
+    )
+    section_path: Mapped[str | None] = mapped_column(String)
+    page_number: Mapped[int | None] = mapped_column(Integer)
+    quote: Mapped[str | None] = mapped_column(Text)
+    stance: Mapped[str | None] = mapped_column(String)  # supports | contradicts | context

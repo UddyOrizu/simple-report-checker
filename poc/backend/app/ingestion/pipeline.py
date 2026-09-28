@@ -62,12 +62,27 @@ def document_title(elements: list[dict], filename: str) -> str:
     return first_heading or filename
 
 
+def _outline_summary(section: dict, sections: list[dict]) -> str | None:
+    """Summary for a section with no body of its own (a heading followed straight by a
+    subheading): it names what the section contains. Asking the model to summarize empty text
+    would only invent content from the title, and the navigator trusts summaries."""
+    children = [s["title"] for s in sections if s.get("parent_order_index") == section["order_index"] and s["title"]]
+    return f"Contains: {'; '.join(children)}" if children else None
+
+
 async def summarize_sections(sections: list[dict], elements: list[dict], config: dict) -> tuple[dict, dict, bool]:
-    """Returns (summaries by order_index, trace by order_index, llm_blocked)."""
+    """Returns (summaries by order_index, trace by order_index, llm_blocked). Sections with no
+    body text get an outline summary from their subsections instead of an LLM call."""
     summarizable = []
+    outline_summaries: dict[int, str] = {}
     for section in sections:
         body = elements[section["start_index"] : section["end_index"]]
         texts = [json.dumps(e["data"]) if e["type"] == "table" else e["text"] for e in body]
+        if not any(t.strip() for t in texts):
+            summary = _outline_summary(section, sections)
+            if summary:
+                outline_summaries[section["order_index"]] = summary
+            continue
         summarizable.append({"order_index": section["order_index"], "title": section["title"], "chunks": texts})
 
     trace: dict[int, list[dict]] = {}
@@ -77,9 +92,9 @@ async def summarize_sections(sections: list[dict], elements: list[dict], config:
 
     try:
         summaries = await generate_all_section_summaries(summarizable, config, on_trace=on_trace)
-        return summaries, trace, False
+        return {**summaries, **outline_summaries}, trace, False
     except MissingCredentialsError:
-        return {}, {}, True
+        return outline_summaries, {}, True
 
 
 async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict:
@@ -124,7 +139,7 @@ async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict
             if summary is not None:
                 section["summary_word_count"] = len(summary.split())
                 calls = summary_trace.get(section["order_index"], [])
-                section["summary_method"] = "batch_and_reduce" if len(calls) > 1 else "direct"
+                section["summary_method"] = "batch_and_reduce" if len(calls) > 1 else "direct" if calls else "outline"
             else:
                 section["summary_word_count"] = None
                 section["summary_method"] = "blocked_credentials" if llm_blocked else None

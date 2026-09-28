@@ -68,6 +68,26 @@ export interface EvidenceItem {
   content_snippet: string | null;
   authority_score: number | null;
   retrieved_at: string;
+  // Structured citation — set for in-document evidence found by vectorless retrieval.
+  section_id: string | null;
+  section_path: string | null;
+  page_number: number | null;
+  quote: string | null;
+  stance: EvidenceStance | null;
+}
+
+export type EvidenceStance = "supports" | "contradicts" | "context";
+
+export interface SectionDetail {
+  id: string;
+  title: string | null;
+  level: number | null;
+  parent_id: string | null;
+  is_pseudo_section: boolean;
+  page_start: number | null;
+  page_end: number | null;
+  summary: string | null;
+  content: string | null;
 }
 
 export interface AgentTraceItem {

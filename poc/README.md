@@ -133,6 +133,21 @@ traced in `agent_traces`. It runs first in the internal-evidence ladder; exact l
 search and the cross-reference resolver are only tried when it finds nothing verifiable. Tune or
 disable it in `config/retrieval.yaml`.
 
+Each citation is also stored as structured fields on `evidence` (`section_id`, `section_path`,
+`page_number`, `quote`, `stance`). In the claim review panel, a cited item shows its stance and
+quote, and its "§ section · page" link opens the section (`GET /documents/{id}/sections/{section_id}`)
+with the quote highlighted.
+
+Nothing is cut off unread: text before the first heading gets its own "Preamble" section, sections
+longer than `max_section_chars` (ingestion.yaml) are split into "(part k of n)" sections at index
+time, and anything longer at read time is quoted part by part, up to `max_reads_per_claim` calls
+per claim (retrieval.yaml). If that cap is hit, the rest is logged as unread.
+
+Documents ingested before Markdown conversion existed have no Markdown or section content, so
+vectorless retrieval can't read them. `python scripts/reprocess_documents.py` lists them;
+`--confirm` re-runs the full pipeline for them. This is destructive: their claims and verdicts are
+regenerated, with the LLM cost that implies. Use `--document <uuid>` or `--all` to choose others.
+
 Inside `docker-compose.yml`, the `api` service talks to Postgres over the Docker network
 (`postgres:5432`); from your host machine (e.g. running `alembic` or `pytest` locally), Postgres
 is reachable at `localhost:5433` — that's why the two `DATABASE_URL` values above differ only in

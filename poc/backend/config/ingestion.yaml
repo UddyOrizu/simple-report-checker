@@ -2,6 +2,9 @@ ocr_confidence_threshold: 0.6        # below this, chunk flagged low_confidence_
 native_text_char_threshold: 20       # PDF page text length above which it's treated as native, not scanned
 short_document_page_threshold: 5     # documents at or below this page count skip structural-index building
 topic_shift_sensitivity: 0.35        # 0-1; lower = more sensitive to topic changes when detecting pseudo-sections
+max_section_chars: 20000             # sections with a longer body are split into "(part k of n)" sections, so each
+                                     # stays readable in full by vectorless retrieval (keep below retrieval.yaml's
+                                     # max_section_chars)
 max_upload_size_mb: 200              # uploads above this are rejected with 413 before processing starts
 progress_event_every_n_pages: 5      # how often ingest_progress events fire on long documents
 persist_chunk_batch: 200             # chunks embedded + written per transaction — bounds memory on large documents

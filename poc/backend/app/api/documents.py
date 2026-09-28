@@ -10,7 +10,7 @@ from app.agents.process_document import process_document
 from app.db import async_session
 from app.events.broadcaster import broadcaster
 from app.ingestion.pipeline import load_config
-from app.models import Claim, Document, PipelineRun, Verdict
+from app.models import Claim, Document, DocumentSection, PipelineRun, Verdict
 
 router = APIRouter()
 
@@ -148,6 +148,27 @@ async def get_document(document_id: uuid.UUID) -> dict:
         if document is None:
             raise HTTPException(status_code=404, detail="Document not found")
         return _document_dict(document)
+
+
+@router.get("/documents/{document_id}/sections/{section_id}")
+async def get_section(document_id: uuid.UUID, section_id: uuid.UUID) -> dict:
+    """One section's own Markdown content — what an evidence citation's section_id points at, so
+    the review UI can show the cited passage in context."""
+    async with async_session() as session:
+        section = await session.get(DocumentSection, section_id)
+        if section is None or section.document_id != document_id:
+            raise HTTPException(status_code=404, detail="Section not found")
+        return {
+            "id": str(section.id),
+            "title": section.title,
+            "level": section.level,
+            "parent_id": str(section.parent_id) if section.parent_id else None,
+            "is_pseudo_section": section.is_pseudo_section,
+            "page_start": section.page_start,
+            "page_end": section.page_end,
+            "summary": section.summary,
+            "content": section.content,
+        }
 
 
 async def stream_events(document_id: uuid.UUID):

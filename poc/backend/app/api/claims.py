@@ -47,6 +47,11 @@ def _evidence_dict(evidence: Evidence) -> dict:
         "content_snippet": evidence.content_snippet,
         "authority_score": evidence.authority_score,
         "retrieved_at": evidence.retrieved_at.isoformat(),
+        "section_id": str(evidence.section_id) if evidence.section_id else None,
+        "section_path": evidence.section_path,
+        "page_number": evidence.page_number,
+        "quote": evidence.quote,
+        "stance": evidence.stance,
     }
 
 

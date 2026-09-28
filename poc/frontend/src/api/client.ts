@@ -1,4 +1,4 @@
-import type { ClaimDetail, ClaimListItem, DocumentDetail, DocumentSummary } from "./types";
+import type { ClaimDetail, ClaimListItem, DocumentDetail, DocumentSummary, SectionDetail } from "./types";
 
 const BASE = "/api";
 
@@ -27,6 +27,10 @@ export async function getDocument(documentId: string): Promise<DocumentDetail> {
 
 export async function listClaims(documentId: string): Promise<ClaimListItem[]> {
   return getJson<ClaimListItem[]>(`/documents/${documentId}/claims`);
+}
+
+export async function getSection(documentId: string, sectionId: string): Promise<SectionDetail> {
+  return getJson<SectionDetail>(`/documents/${documentId}/sections/${sectionId}`);
 }
 
 export async function getClaim(claimId: string): Promise<ClaimDetail> {

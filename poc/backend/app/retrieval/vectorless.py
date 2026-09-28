@@ -5,7 +5,8 @@ the way a person reads a table of contents — titles + one-line summaries, neve
 — and reasons about which section holds the evidence for a claim. Then:
 
   1. navigate  — pick up to `max_sections` sections from the outline (mini tier)
-  2. read      — load each chosen section's Markdown content, subsections included
+  2. read      — load each chosen section's Markdown content, subsections included, split into
+                 parts of `max_section_chars` when long so nothing is cut off unread
   3. quote     — extract verbatim passages that support / contradict the claim (standard tier)
   4. verify    — keep only quotes that actually appear in the section text (quote_match), and
                  drop any that are just the claim's own sentence quoted back
@@ -167,6 +168,45 @@ async def _extract_quotes(claim: Claim, section_path: str, text: str, config: di
     return extraction.quotes[: config["max_quotes_per_section"]], prompt, extraction.model_dump_json()
 
 
+def split_text(text: str, max_chars: int) -> list[str]:
+    """Splits `text` into consecutive parts of at most `max_chars`, cutting between paragraphs
+    (blank-line boundaries) and only mid-paragraph when a single paragraph is itself too long —
+    so every part of a long section gets read, rather than everything past a cut-off silently."""
+    parts: list[str] = []
+    current = ""
+    for block in (b for b in text.split("\n\n") if b.strip()):
+        while len(block) > max_chars:
+            if current:
+                parts.append(current)
+                current = ""
+            parts.append(block[:max_chars])
+            block = block[max_chars:]
+        if current and len(current) + 2 + len(block) > max_chars:
+            parts.append(current)
+            current = ""
+        current = f"{current}\n\n{block}" if current else block
+    if current:
+        parts.append(current)
+    return parts
+
+
+def _expand_reads(reads: list[tuple[list["_Node"], str, str]], max_chars: int, max_reads: int, claim: Claim):
+    """Each (nodes, label, text) read longer than `max_chars` becomes several "(part k of n)"
+    reads. The total is capped at `max_reads` to bound per-claim LLM cost; whatever the cap cuts
+    is logged, never dropped silently."""
+    expanded = []
+    for nodes, label, text in reads:
+        parts = split_text(text, max_chars)
+        for n, part in enumerate(parts):
+            expanded.append((nodes, f"{label} (part {n + 1} of {len(parts)})" if len(parts) > 1 else label, part))
+    if len(expanded) > max_reads:
+        logger.warning(
+            "Vectorless retrieval for claim %s needs %d reads; reading the first %d (raise max_reads_per_claim to cover the rest)",
+            claim.id, len(expanded), max_reads,
+        )
+    return expanded[:max_reads]
+
+
 def _trace(claim: Claim, agent_name: str, prompt: str, response: str, config_hash: str) -> AgentTrace:
     return AgentTrace(
         claim_id=claim.id, agent_name=agent_name, prompt_sent=prompt, raw_response=response, tool_calls=None, config_hash=config_hash
@@ -192,18 +232,20 @@ async def find_section_evidence(session: AsyncSession, claim: Claim, config: dic
 
     # (nodes the quote may come from, citation label for the whole read, text read)
     reads: list[tuple[list[_Node], str, str]] = []
+    document_label: str | None = None  # citation path when there's no section tree to cite into
     try:
         if sections and any(s.content for s in sections):
             roots = _build_tree(list(sections))
             chosen, nav_prompt, nav_response = await _navigate(claim, roots, config["max_sections"])
             session.add(_trace(claim, "vectorless_navigator", nav_prompt, nav_response, config_hash))
-            reads = [(node.flatten(), " > ".join(node.path), node.full_text()[:max_chars]) for node in chosen]
+            reads = [(node.flatten(), " > ".join(node.path), node.full_text()) for node in chosen]
         else:
             document = await session.get(Document, claim.document_id)
             if document is not None and document.markdown:
-                reads = [([], document.filename, document.markdown[:max_chars])]
+                document_label = document.filename
+                reads = [([], document.filename, document.markdown)]
 
-        reads = [read for read in reads if read[2].strip()]
+        reads = _expand_reads([r for r in reads if r[2].strip()], max_chars, config.get("max_reads_per_claim", 6), claim)
         results = await asyncio.gather(*(_extract_quotes(claim, label, text, config) for _, label, text in reads))
     except MissingCredentialsError:
         raise
@@ -219,7 +261,7 @@ async def find_section_evidence(session: AsyncSession, claim: Claim, config: dic
 
     evidence: list[Evidence] = []
     seen: set[str] = set()
-    for (nodes, label, text), (quotes, quote_prompt, quote_response) in zip(reads, results):
+    for (nodes, _label, text), (quotes, quote_prompt, quote_response) in zip(reads, results):
         session.add(_trace(claim, "vectorless_quoter", quote_prompt, quote_response, config_hash))
         for item in quotes:
             match = locate_quote(text, item.quote)
@@ -233,13 +275,13 @@ async def find_section_evidence(session: AsyncSession, claim: Claim, config: dic
             # Cite the most specific section the quote actually sits in, not just the one navigated to.
             best = max(nodes, key=lambda n: locate_quote(n.section.content or "", item.quote).score, default=None)
             if best is not None:
-                section_ids = {best.section.id}
-                ref = f"document_section:{best.section.id}"
+                section_id = best.section.id
+                ref = f"document_section:{section_id}"
                 path = " > ".join(best.path)
                 fallback_page = best.section.page_start
             else:
-                section_ids, ref, path, fallback_page = None, f"document:{claim.document_id}", label, None
-            candidate_chunks = [c for c in doc_chunks if section_ids is None or c.section_id in section_ids]
+                section_id, ref, path, fallback_page = None, f"document:{claim.document_id}", document_label, None
+            candidate_chunks = [c for c in doc_chunks if section_id is None or c.section_id == section_id]
             page = _page_for_quote(item.quote, candidate_chunks, fallback_page)
 
             evidence.append(
@@ -249,6 +291,11 @@ async def find_section_evidence(session: AsyncSession, claim: Claim, config: dic
                     source_ref=citation(ref, page, path),
                     content_snippet=f'{item.stance.upper()}: "{item.quote}" — {item.explanation}',
                     authority_score=match.score,
+                    section_id=section_id,
+                    section_path=path,
+                    page_number=page,
+                    quote=item.quote,
+                    stance=item.stance,
                 )
             )
     return evidence

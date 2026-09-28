@@ -14,6 +14,11 @@ import threading
 # so the API still starts instantly when no PDF is ever uploaded.
 _models = None
 _models_lock = threading.Lock()
+# One conversion at a time per process: every upload's background task shares the models above,
+# and marker isn't built for concurrent inference on them (two PDFs at once can exhaust GPU memory
+# or interleave state). Held per batch, not per document, so concurrent uploads take turns batch by
+# batch and all keep reporting progress.
+_convert_lock = threading.Lock()
 
 
 def marker_available() -> bool:
@@ -47,13 +52,15 @@ def pdf_pages_to_markdown(path: str, start_page: int, max_pages: int, config: di
     settings.EXTRACT_IMAGES = False
 
     conversion = config.get("markdown_conversion", {})
-    full_text, _images, _metadata = convert_single_pdf(
-        path,
-        _load_models(),
-        start_page=start_page,
-        max_pages=max_pages,
-        langs=conversion.get("marker_langs"),
-        batch_multiplier=conversion.get("marker_batch_multiplier", 1),
-        ocr_all_pages=conversion.get("marker_ocr_all_pages", False),
-    )
+    models = _load_models()
+    with _convert_lock:
+        full_text, _images, _metadata = convert_single_pdf(
+            path,
+            models,
+            start_page=start_page,
+            max_pages=max_pages,
+            langs=conversion.get("marker_langs"),
+            batch_multiplier=conversion.get("marker_batch_multiplier", 1),
+            ocr_all_pages=conversion.get("marker_ocr_all_pages", False),
+        )
     return full_text

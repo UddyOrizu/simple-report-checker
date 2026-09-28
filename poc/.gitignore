@@ -17,3 +17,7 @@ backend/scripts/.run_snapshots/
 
 # OS
 .DS_Store
+
+# Converter output written next to inputs when markdown_conversion.save_markdown is on
+*.docx.md
+*.pdf.md
