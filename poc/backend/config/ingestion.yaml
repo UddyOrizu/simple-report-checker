@@ -4,6 +4,7 @@ short_document_page_threshold: 5     # documents at or below this page count ski
 topic_shift_sensitivity: 0.35        # 0-1; lower = more sensitive to topic changes when detecting pseudo-sections
 max_upload_size_mb: 200              # uploads above this are rejected with 413 before processing starts
 progress_event_every_n_pages: 5      # how often ingest_progress events fire on long documents
+persist_chunk_batch: 200             # chunks embedded + written per transaction — bounds memory on large documents
 section_summary_max_words: 150       # hard cap on every generated section summary, at any recursion level
 section_summary_direct_word_limit: 3000  # sections at or below this word count get summarized in a single LLM call;
                                           # above this, summarized hierarchically — see Phase 2.5.1
@@ -16,6 +17,19 @@ markdown_conversion:
   docx: true                   # mammoth + markdownify; false = the python-docx parser
   save_markdown: false         # also write the raw converter output next to the upload as <file>.md
                                # (debugging aid — documents.markdown already stores the rendered Markdown)
+  marker_pages_per_batch: 10   # pages marker converts per call; progress is reported between batches.
+                               # Larger = better cross-page header/footer and heading-level detection
   marker_batch_multiplier: 1   # raise on a GPU with spare VRAM for faster conversion
   marker_ocr_all_pages: false  # true forces OCR even on pages with a native text layer
   marker_langs: null           # e.g. ["English"]; null = marker's default
+
+# LLM-generated headings (app/ingestion/heading_generator.py) for documents with little or no
+# structure of their own. Replaces topic-shift pseudo-sections when an LLM is available.
+generated_headings:
+  enabled: true
+  min_real_headings: 2         # documents with fewer real headings than this get generated ones
+                               # (2 = also covers documents whose only heading is a title)
+  target_section_words: 800    # rough section size the model is asked to aim for
+  window_chars: 40000          # document text shown to the model per call; longer documents take several calls
+  paragraph_preview_chars: 800 # each paragraph is truncated to this in the prompt
+  tier: standard               # "standard" or "mini"

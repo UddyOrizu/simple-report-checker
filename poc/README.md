@@ -98,6 +98,27 @@ hierarchy (`#`/`##`/`###` levels) instead of guessing headings from font sizes:
 Both are toggled in `config/ingestion.yaml` under `markdown_conversion`. The rendered Markdown is
 stored on `documents.markdown`, and each section's own body on `document_sections.content`.
 
+Every document takes the same ingestion path regardless of size (`app/ingestion/pipeline.py`).
+Only conversion runs incrementally (`app/ingestion/conversion.py`): marker converts
+`marker_pages_per_batch` pages per call, the native parser one page at a time, and a `.docx` in one
+go, with `ingest_progress` events in between. Generated headings, chunking, the structural index
+and summaries then run once over the whole document, and chunks are embedded and written
+`persist_chunk_batch` at a time so memory stays bounded. marker drops a blank page's page break, so
+when a batch comes back with fewer page breaks than pages, its page numbers are re-derived from the
+PDF's own text layer.
+
+### Generated section headings
+
+Documents longer than `short_document_page_threshold` with fewer than two real headings (no
+headings at all, or only a title) get LLM-generated ones (`app/ingestion/heading_generator.py`):
+the model reads the paragraphs in order, in windows for long documents, and decides where the
+topic changes and what to call each part. The headings are inserted before chunking, so they
+feed chunk context, the structural index, section summaries and vectorless retrieval just like
+real headings. Their sections are marked `is_pseudo_section = true`, and the model calls are
+traced in the ingest `pipeline_runs.raw_output.heading_generation_trace`. Without an LLM key (or
+on a bad response) ingestion falls back to topic-shift pseudo-sections. Configure under
+`generated_headings` in `config/ingestion.yaml`.
+
 ### Vectorless retrieval (section evidence with citations)
 
 `app/retrieval/vectorless.py` finds in-document evidence without embeddings, in the style of

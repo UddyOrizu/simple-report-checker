@@ -1,10 +1,20 @@
-"""Core ingestion pipeline: parse -> chunk -> structural index -> section summaries -> persist,
+"""Core ingestion pipeline — the one path every document takes, whatever its type or size:
+
+    convert (page batches, progress events)  ->  generated headings  ->  chunk  ->  structural
+    index  ->  section summaries  ->  persist (sections, then chunks + embeddings in batches)
+
 against an EXISTING documents row. Shared by scripts/run_ingest.py (which creates that row itself
-for standalone CLI use) and the real upload endpoint's background processing (Phase 9.1, whose
-row already exists by the time this runs).
+for standalone CLI use) and the upload endpoint's background processing (whose row already exists
+by the time this runs).
+
+Only conversion is incremental (see app/ingestion/conversion.py): it's the expensive, page-shaped
+step — OCR / marker's layout models — and the one worth reporting progress on. Parsed elements are
+text only (a few MB even for hundreds of pages), so the steps after it see the whole document at
+once: generated headings need the whole document to decide structure, and chunks need final
+headings for their context capsules. Chunk embeddings — the one large per-chunk payload — are
+computed and written `persist_chunk_batch` chunks at a time, so memory stays bounded regardless.
 """
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -12,17 +22,14 @@ import os
 import time
 import uuid
 
-import pymupdf as fitz
 import yaml
-from sqlalchemy import update
 
 from app.db import async_session
+from app.events.broadcaster import broadcaster
 from app.ingestion.chunker import chunk_document
-from app.ingestion.converters.docx_to_markdown import docx_to_markdown
-from app.ingestion.converters.pdf_to_markdown import marker_available, pdf_to_markdown
-from app.ingestion.parsers.docx_parser import parse_docx
-from app.ingestion.parsers.markdown_parser import elements_to_markdown, parse_markdown
-from app.ingestion.parsers.pdf_parser import parse_pdf
+from app.ingestion.conversion import convert_document
+from app.ingestion.heading_generator import add_generated_headings, needs_generated_headings
+from app.ingestion.parsers.markdown_parser import elements_to_markdown
 from app.ingestion.section_summarizer import generate_all_section_summaries
 from app.ingestion.structural_index import build_structural_index
 from app.llm.client import MissingCredentialsError
@@ -33,63 +40,16 @@ logger = logging.getLogger(__name__)
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config", "ingestion.yaml")
 
-# python-docx exposes no real page count (that's a Word layout concern) — this rough
-# words-per-page estimate is only used for docx's short_document_page_threshold check.
-# PDFs get an exact page count for free from PyMuPDF and never use this.
-DOCX_WORDS_PER_PAGE = 400
-
 
 def load_config() -> dict:
     with open(CONFIG_PATH) as f:
         return yaml.safe_load(f)
 
 
-def estimate_docx_page_count(elements: list[dict]) -> int:
-    word_count = sum(len(e["text"].split()) for e in elements if e["type"] != "table")
-    return max(1, round(word_count / DOCX_WORDS_PER_PAGE))
-
-
-def uses_marker_for_pdf(config: dict) -> bool:
-    """PDFs go through marker only when it's both enabled in config and actually installed — it's
-    an optional extra, and a missing install falls back to the pdfplumber/OCR parser rather than
-    failing the upload."""
-    return config.get("markdown_conversion", {}).get("pdf", False) and marker_available()
-
-
 def _save_markdown(path: str, markdown: str, config: dict) -> None:
     if config.get("markdown_conversion", {}).get("save_markdown", False):
         with open(f"{path}.md", "w", encoding="utf-8") as f:
             f.write(markdown)
-
-
-def parse_document(path: str, config: dict) -> tuple[list[dict], int, str]:
-    """Sync and CPU-heavy (marker runs layout/OCR models) — async callers should run it via
-    asyncio.to_thread, as run_ingestion does."""
-    conversion = config.get("markdown_conversion", {})
-    ext = os.path.splitext(path)[1].lower()
-    if ext == ".docx":
-        if conversion.get("docx", False):
-            markdown = docx_to_markdown(path)
-            _save_markdown(path, markdown, config)
-            elements = parse_markdown(markdown)
-        else:
-            elements = parse_docx(path)
-        elements = _clean_parsed_elements(elements)
-        return elements, estimate_docx_page_count(elements), "docx"
-    if ext == ".pdf":
-        if uses_marker_for_pdf(config):
-            markdown = pdf_to_markdown(path, config)
-            _save_markdown(path, markdown, config)
-            elements = parse_markdown(markdown, paginated=True)
-        else:
-            if conversion.get("pdf", False):
-                logger.warning("markdown_conversion.pdf is enabled but marker-pdf isn't installed — using the native PDF parser")
-            elements = parse_pdf(path, config)
-        elements = _clean_parsed_elements(elements)
-        with fitz.open(path) as doc:
-            page_count = len(doc)
-        return elements, page_count, "pdf"
-    raise ValueError(f"Unsupported file type: {ext}")
 
 
 def section_content(section: dict, elements: list[dict]) -> str:
@@ -123,21 +83,36 @@ async def summarize_sections(sections: list[dict], elements: list[dict], config:
 
 
 async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict:
-    """Parses, chunks, structurally indexes, and summarizes `path`, then persists everything
+    """Converts, chunks, structurally indexes, and summarizes `path`, then persists everything
     against the existing `document_id` row (updating its file_type/page_count/
-    has_structural_index/status) and writes a pipeline_runs row."""
+    has_structural_index/markdown/status) and writes a pipeline_runs row. Publishes
+    ingest_progress events during conversion and one ingest_complete at the end."""
     start = time.monotonic()
+    every_n = config["progress_event_every_n_pages"]
+    last_reported = 0
 
-    elements, page_count, file_type = await asyncio.to_thread(parse_document, path, config)
+    async def on_progress(pages_done: int, pages_total: int) -> None:
+        # Fires whenever conversion crosses a multiple of every_n pages (a marker batch can cross
+        # one mid-batch — reported with its real pages_done) and always on the final page.
+        nonlocal last_reported
+        if pages_done // every_n > last_reported // every_n or pages_done == pages_total:
+            await broadcaster.publish(document_id, {"event": "ingest_progress", "pages_done": pages_done, "pages_total": pages_total})
+        last_reported = pages_done
+
+    converted = await convert_document(path, config, on_progress=on_progress)
+    _save_markdown(path, converted.markdown, config)
+    elements, page_count, file_type = converted.elements, converted.page_count, converted.file_type
+
     title = document_title(elements, os.path.basename(path))
+    # Before chunking, so chunks' context capsules carry the generated section titles too. The
+    # document title is taken first so a generated heading can never become it.
+    heading_trace: list[dict] = []
+    if needs_generated_headings(elements, page_count, config):
+        elements = await add_generated_headings(
+            elements, config, on_trace=lambda prompt, response: heading_trace.append({"prompt": prompt, "response": response})
+        )
     chunks = chunk_document(elements, document_title=title)
     sections = build_structural_index(page_count, elements, config)
-
-    embedding_service = EmbeddingService()
-
-    embeddings = await embedding_service.embed_texts([c["chunk_text"] for c in chunks])
-    for chunk, embedding in zip(chunks, embeddings):
-        chunk["embedding"] = embedding
 
     summary_trace: dict[int, list[dict]] = {}
     llm_blocked = False
@@ -154,11 +129,14 @@ async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict
                 section["summary_word_count"] = None
                 section["summary_method"] = "blocked_credentials" if llm_blocked else None
 
-    duration_ms = int((time.monotonic() - start) * 1000)
-
-
     pipeline_run_id = await _persist(
-        document_id, path, file_type, page_count, config, elements, chunks, sections, summary_trace, duration_ms
+        document_id, path, file_type, page_count, config, elements, chunks, sections, summary_trace, start,
+        heading_trace=heading_trace,
+    )
+    duration_ms = int((time.monotonic() - start) * 1000)
+    table_count = sum(1 for c in chunks if c["chunk_type"] == "table")
+    await broadcaster.publish(
+        document_id, {"event": "ingest_complete", "page_count": page_count, "chunk_count": len(chunks), "table_count": table_count}
     )
 
     return {
@@ -169,45 +147,13 @@ async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict
         "page_count": page_count,
         "has_structural_index": sections is not None,
         "chunk_count": len(chunks),
-        "table_count": sum(1 for c in chunks if c["chunk_type"] == "table"),
+        "table_count": table_count,
         "section_count": len(sections) if sections else 0,
         "duration_ms": duration_ms,
         "elements": elements,
         "chunks": chunks,
         "sections": sections,
     }
-
-
-def _clean_text(text: str) -> str:
-    if not text:
-        return ""
-    # Normalize line endings, remove BOM, collapse whitespace
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = text.replace("\ufeff", "")
-    # Collapse multiple newlines into a single newline, then collapse remaining whitespace
-    import re
-
-    text = re.sub(r"\n{2,}", "\n", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def _clean_parsed_elements(elements: list[dict]) -> list[dict]:
-    """Normalize text in parsed elements immediately after file parsing so downstream
-    chunking and extraction sees consistent whitespace and no stray linebreaks.
-    Handles paragraphs, headings, and table cell text.
-    """
-    cleaned: list[dict] = []
-    for el in elements:
-        if el.get("type") in ("paragraph", "heading"):
-            el = {**el, "text": _clean_text(el.get("text", ""))}
-        elif el.get("type") == "table":
-            # table `data` is a list of rows; each row is list of cell strings
-            table = el.get("data") or []
-            cleaned_table = [[_clean_text(cell) for cell in row] for row in table]
-            el = {**el, "data": cleaned_table}
-        cleaned.append(el)
-    return cleaned
 
 
 async def _persist(
@@ -220,9 +166,63 @@ async def _persist(
     chunks: list[dict],
     sections: list[dict] | None,
     summary_trace: dict[int, list[dict]],
-    duration_ms: int,
+    start: float,
+    heading_trace: list[dict] | None = None,
 ) -> str:
+    """Three phases, each committed: sections (chunks reference them), then chunks + tables in
+    batches of `persist_chunk_batch` (embedded just before they're written, so at most one batch
+    of embedding vectors is ever held in memory), then the document's final state + the
+    pipeline_runs row. The document is only marked "ingested" in that last phase, so an attempt
+    that dies partway leaves it un-ingested and process_document's resume discards the partial
+    rows before rerunning."""
     config_hash = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:16]
+    batch_size = max(1, config.get("persist_chunk_batch", 200))
+
+    section_id_by_order: dict[int, uuid.UUID] = {}
+    section_id_by_element: list[uuid.UUID | None] = [None] * len(elements)
+    if sections:
+        async with async_session() as session:
+            for section in sections:
+                row = _section_row(document_id, section, elements, section.get("summary"), section_id_by_order)
+                session.add(row)
+                await session.flush()
+                section_id_by_order[section["order_index"]] = row.id
+                for i in range(section["start_index"], section["end_index"]):
+                    section_id_by_element[i] = row.id
+            await session.commit()
+
+    embedding_service = EmbeddingService()
+    for batch_start in range(0, len(chunks), batch_size):
+        batch = chunks[batch_start : batch_start + batch_size]
+        embeddings = await embedding_service.embed_texts([c["chunk_text"] for c in batch])
+        async with async_session() as session:
+            for chunk, embedding in zip(batch, embeddings):
+                element = elements[chunk["element_index"]]
+                section_id = section_id_by_element[chunk["element_index"]]
+                session.add(
+                    DocumentChunk(
+                        document_id=document_id,
+                        section_id=section_id,
+                        chunk_type=chunk["chunk_type"],
+                        chunk_text=chunk["chunk_text"],
+                        context_capsule=chunk["context_capsule"],
+                        page_number=chunk.get("page_number"),
+                        char_start=chunk["char_start"],
+                        char_end=chunk["char_end"],
+                        ocr_confidence=chunk.get("ocr_confidence"),
+                        embedding=embedding,
+                    )
+                )
+                if chunk["chunk_type"] == "table":
+                    session.add(
+                        ExtractedTable(
+                            document_id=document_id,
+                            section_id=section_id,
+                            page_number=chunk.get("page_number"),
+                            table_data=element["data"],
+                        )
+                    )
+            await session.commit()
 
     async with async_session() as session:
         document = await session.get(Document, document_id)
@@ -233,50 +233,8 @@ async def _persist(
         document.status = "ingested"
         document.failed_stage = None
 
-        section_id_by_order: dict[int, object] = {}
-        if sections:
-            for section in sections:
-                row = _section_row(document_id, section, elements, section.get("summary"), section_id_by_order)
-                session.add(row)
-                await session.flush()
-                section_id_by_order[section["order_index"]] = row.id
-
-        def section_id_for(element_index: int):
-            if not sections:
-                return None
-            for section in sections:
-                if section["start_index"] <= element_index < section["end_index"]:
-                    return section_id_by_order[section["order_index"]]
-            return None
-
-        for chunk in chunks:
-            element = elements[chunk["element_index"]]
-            section_id = section_id_for(chunk["element_index"])
-            session.add(
-                DocumentChunk(
-                    document_id=document_id,
-                    section_id=section_id,
-                    chunk_type=chunk["chunk_type"],
-                    chunk_text=chunk["chunk_text"],
-                    context_capsule=chunk["context_capsule"],
-                    page_number=chunk.get("page_number"),
-                    char_start=chunk["char_start"],
-                    char_end=chunk["char_end"],
-                    ocr_confidence=chunk.get("ocr_confidence"),
-                    embedding=chunk["embedding"],
-                )
-            )
-            if chunk["chunk_type"] == "table":
-                session.add(
-                    ExtractedTable(
-                        document_id=document_id,
-                        section_id=section_id,
-                        page_number=chunk.get("page_number"),
-                        table_data=element["data"],
-                    )
-                )
-
         raw_output = {
+            "heading_generation_trace": heading_trace or [],
             "summary_trace": {
                 str(section_id_by_order[order_index]): calls for order_index, calls in summary_trace.items()
             },
@@ -293,7 +251,7 @@ async def _persist(
             config_hash=config_hash,
             input_ref=path,
             raw_output=raw_output,
-            duration_ms=duration_ms,
+            duration_ms=int((time.monotonic() - start) * 1000),
         )
         session.add(pipeline_run)
 
@@ -319,56 +277,3 @@ def _section_row(
         parent_id=section_id_by_order.get(parent_order_index) if parent_order_index is not None else None,
         content=section_content(section, elements),
     )
-
-
-async def finalize_pdf_structure(
-    document_id: uuid.UUID, path: str, page_count: int, config: dict, elements: list[dict] | None = None
-) -> None:
-    """Runs structural indexing + section summarization for a PDF already ingested via
-    large_file.py's page-by-page path (Phase 2.7). `elements` should normally be the list
-    process_large_pdf already accumulated while parsing/OCRing page-by-page — passing it through
-    avoids a second full pass over the file, which for a scanned document would otherwise mean
-    re-running OCR (the single most expensive step) on every non-native page a second time.
-    Falls back to re-parsing from `path` when `elements` isn't supplied, for standalone callers
-    that only have a page_count and a file path.
-
-    Builds sections from `elements` and re-links the already-persisted chunks/tables to them by
-    page range, then marks the document ingested."""
-    if elements is None:
-        elements = parse_pdf(path, config)
-    sections = build_structural_index(page_count, elements, config)
-
-    async with async_session() as session:
-        section_id_by_order: dict[int, object] = {}
-        if sections:
-            summaries, _, _ = await summarize_sections(sections, elements, config)
-            for section in sections:
-                row = _section_row(document_id, section, elements, summaries.get(section["order_index"]), section_id_by_order)
-                session.add(row)
-                await session.flush()
-                section_id_by_order[section["order_index"]] = row.id
-
-                page_start = section["page_start"] if section["page_start"] is not None else 0
-                page_end = section["page_end"] if section["page_end"] is not None else 10**9
-                await session.execute(
-                    update(DocumentChunk)
-                    .where(DocumentChunk.document_id == document_id)
-                    .where(DocumentChunk.page_number >= page_start)
-                    .where(DocumentChunk.page_number <= page_end)
-                    .values(section_id=row.id)
-                )
-                await session.execute(
-                    update(ExtractedTable)
-                    .where(ExtractedTable.document_id == document_id)
-                    .where(ExtractedTable.page_number >= page_start)
-                    .where(ExtractedTable.page_number <= page_end)
-                    .values(section_id=row.id)
-                )
-
-        document = await session.get(Document, document_id)
-        document.page_count = page_count
-        document.has_structural_index = sections is not None
-        document.markdown = elements_to_markdown(elements)
-        document.status = "ingested"
-        document.failed_stage = None
-        await session.commit()

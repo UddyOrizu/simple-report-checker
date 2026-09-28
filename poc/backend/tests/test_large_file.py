@@ -1,3 +1,8 @@
+"""Large documents go through the same run_ingestion path as every other document — these tests
+pin the properties that path has to keep at scale: a responsive event loop, progress events at the
+configured interval, bounded memory, and complete persistence (now including the structural index,
+built in the same run rather than a separate finalize pass)."""
+
 import asyncio
 import os
 import resource
@@ -9,8 +14,8 @@ from sqlalchemy import delete, select
 
 from app.db import async_session
 from app.events.broadcaster import broadcaster
-from app.ingestion.large_file import process_large_pdf
-from app.models import Document, DocumentChunk, ExtractedTable
+from app.ingestion.pipeline import run_ingestion
+from app.models import Document, DocumentChunk, DocumentSection, ExtractedTable
 
 DOCUMENT_TITLE = "Annual Regional Performance Report"
 
@@ -22,9 +27,9 @@ def _config():
 
 @pytest_asyncio.fixture
 async def large_report_document(fixtures_dir):
-    """process_large_pdf writes directly to the real dev DB (not the rollback-wrapped
-    db_session fixture used elsewhere), since it exercises app.db.async_session the same way
-    production background processing will — so this fixture cleans up explicitly instead."""
+    """run_ingestion writes directly to the real dev DB (not the rollback-wrapped db_session
+    fixture used elsewhere), since it exercises app.db.async_session the same way production
+    background processing does — so this fixture cleans up explicitly instead."""
     async with async_session() as session:
         document = Document(
             filename="large_report.pdf",
@@ -39,6 +44,9 @@ async def large_report_document(fixtures_dir):
     yield document_id
 
     async with async_session() as session:
+        await session.execute(delete(ExtractedTable).where(ExtractedTable.document_id == document_id))
+        await session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
+        await session.execute(delete(DocumentSection).where(DocumentSection.document_id == document_id))
         await session.execute(delete(Document).where(Document.id == document_id))
         await session.commit()
 
@@ -57,7 +65,7 @@ async def test_thread_pool_offload_does_not_block_event_loop(large_report_docume
             await asyncio.sleep(0.05)
 
     ticker_task = asyncio.create_task(ticker())
-    await process_large_pdf(large_report_document, path, DOCUMENT_TITLE, config)
+    await run_ingestion(large_report_document, path, config)
     stop = True
     await ticker_task
 
@@ -72,7 +80,7 @@ async def test_progress_events_arrive_at_configured_interval(large_report_docume
     every_n = config["progress_event_every_n_pages"]
 
     queue = broadcaster.subscribe(large_report_document)
-    result = await process_large_pdf(large_report_document, path, DOCUMENT_TITLE, config)
+    result = await run_ingestion(large_report_document, path, config)
     broadcaster.unsubscribe(large_report_document, queue)
 
     events = []
@@ -92,6 +100,7 @@ async def test_progress_events_arrive_at_configured_interval(large_report_docume
     assert len(complete_events) == 1
     assert events[-1]["event"] == "ingest_complete"
     assert complete_events[0]["page_count"] == result["page_count"]
+    assert complete_events[0]["chunk_count"] == result["chunk_count"]
 
 
 async def test_memory_does_not_scale_with_page_count(large_report_document, fixtures_dir):
@@ -99,34 +108,40 @@ async def test_memory_does_not_scale_with_page_count(large_report_document, fixt
     config = _config()
 
     rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    await process_large_pdf(large_report_document, path, DOCUMENT_TITLE, config)
+    await run_ingestion(large_report_document, path, config)
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
     # ru_maxrss is KB on Linux, bytes on macOS — normalize to MB either way
     units_per_mb = 1024 * 1024 if sys.platform == "darwin" else 1024
     growth_mb = (rss_after - rss_before) / units_per_mb
-    # incremental per-page persistence means peak memory holds ~one page's elements at a time,
-    # not all 80 pages' worth — well under what accumulating everything in a list would cost
+    # parsed elements are text only, and embeddings are computed + written persist_chunk_batch
+    # chunks at a time, so peak memory stays well under what holding every embedding would cost
     assert growth_mb < 300
 
 
-async def test_persists_chunks_and_tables_incrementally(large_report_document, fixtures_dir):
+async def test_persists_chunks_tables_and_sections(large_report_document, fixtures_dir):
     path = os.path.join(fixtures_dir, "large_report.pdf")
     config = _config()
 
-    result = await process_large_pdf(large_report_document, path, DOCUMENT_TITLE, config)
+    result = await run_ingestion(large_report_document, path, config)
 
     assert result["page_count"] == 80
     assert result["table_count"] == 1
 
     async with async_session() as session:
+        document = await session.get(Document, large_report_document)
         chunks = (
             await session.execute(select(DocumentChunk).where(DocumentChunk.document_id == large_report_document))
         ).scalars().all()
         tables = (
             await session.execute(select(ExtractedTable).where(ExtractedTable.document_id == large_report_document))
         ).scalars().all()
+        sections = (
+            await session.execute(select(DocumentSection).where(DocumentSection.document_id == large_report_document))
+        ).scalars().all()
 
+    assert document.status == "ingested"
+    assert document.markdown
     assert len(chunks) == result["chunk_count"]
     assert len(tables) == 1
 
@@ -142,6 +157,11 @@ async def test_persists_chunks_and_tables_incrementally(large_report_document, f
         ["Revenue (current period)", "$112M"],
         ["Revenue (prior period)", "$100M"],
     ]
+
+    # Same run builds the section tree and links chunks/tables to it — no separate finalize pass.
+    assert document.has_structural_index and sections
+    assert appendix_table.section_id is not None
+    assert all(s.content is not None for s in sections)
 
     # OCR-routed pages produced chunks with confidence scores, alongside native ones without
     ocr_chunks = [c for c in chunks if c.ocr_confidence is not None]

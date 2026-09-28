@@ -43,7 +43,9 @@ def sections_from_headings(elements: list[dict]) -> list[dict]:
         sections.append(
             {
                 "title": elements[h_idx]["text"],
-                "is_pseudo_section": False,
+                # Sections under an LLM-generated heading are flagged pseudo: the title describes
+                # the content but isn't the author's.
+                "is_pseudo_section": bool(elements[h_idx].get("synthetic")),
                 "order_index": order_index,
                 "level": level,
                 "parent_order_index": open_sections[-1][1] if open_sections else None,

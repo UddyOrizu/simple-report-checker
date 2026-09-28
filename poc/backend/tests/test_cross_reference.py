@@ -109,17 +109,13 @@ async def test_returns_none_when_navigator_finds_no_plausible_section(db_session
 
 @requires_llm
 async def test_large_report_far_apart_claim_resolves_via_real_navigator(fixtures_dir):
-    """End-to-end: ingests large_report.pdf for real (Phase 2.7's pipeline), then resolves the
+    """End-to-end: ingests large_report.pdf for real (the same run_ingestion path every document
+    takes, which builds and summarizes the structural index in the same run), then resolves the
     page-1 claim whose evidence sits ~75 pages later via the actual LLM-backed navigator — the
     scenario the far-apart pair in that fixture exists for."""
-    import uuid
-
     from app.db import async_session
-    from app.ingestion.large_file import process_large_pdf
-    from app.ingestion.section_summarizer import generate_all_section_summaries
-    from app.ingestion.structural_index import build_structural_index
-    from app.ingestion.parsers.pdf_parser import parse_pdf
-    from sqlalchemy import select, update
+    from app.ingestion.pipeline import run_ingestion
+    from sqlalchemy import select
 
     config_path = os.path.join(os.path.dirname(__file__), "..", "config", "ingestion.yaml")
     config = yaml.safe_load(open(config_path))
@@ -133,53 +129,10 @@ async def test_large_report_far_apart_claim_resolves_via_real_navigator(fixtures
         await session.commit()
         document_id = document.id
 
-    result = await process_large_pdf(document_id, path, "Annual Regional Performance Report", config)
-
-    # process_large_pdf doesn't build/persist the structural index (that's the whole-document
-    # path in scripts/run_ingest.py) — build and summarize it here against the same elements
-    elements = parse_pdf(path, config)
-    sections = build_structural_index(result["page_count"], elements, config)
-    assert sections  # large_report.pdf has real headings — should never short-circuit
+    result = await run_ingestion(document_id, path, config)
+    assert result["sections"]  # large_report.pdf has real headings — should never short-circuit
 
     async with async_session() as session:
-        summaries = await generate_all_section_summaries(
-            [{"order_index": s["order_index"], "title": s["title"], "chunks": [
-                e["data"] if isinstance(e.get("data"), list) else e.get("text", "")
-                for e in elements[s["start_index"]:s["end_index"]]
-            ]} for s in sections],
-            config,
-        )
-        section_rows = []
-        for s in sections:
-            row = DocumentSection(
-                document_id=document_id, title=s["title"], is_pseudo_section=s["is_pseudo_section"],
-                summary=summaries.get(s["order_index"]), order_index=s["order_index"],
-                page_start=s["page_start"], page_end=s["page_end"],
-            )
-            session.add(row)
-            section_rows.append((s, row))
-        await session.execute(update(Document).where(Document.id == document_id).values(has_structural_index=True))
-        await session.flush()
-
-        # re-link this run's chunks/tables to their sections (process_large_pdf didn't know about
-        # sections yet since they didn't exist until just now)
-        for s, row in section_rows:
-            await session.execute(
-                update(DocumentChunk)
-                .where(DocumentChunk.document_id == document_id)
-                .where(DocumentChunk.page_number >= (s["page_start"] or 0))
-                .where(DocumentChunk.page_number <= (s["page_end"] or 10**9))
-                .values(section_id=row.id)
-            )
-            await session.execute(
-                update(ExtractedTable)
-                .where(ExtractedTable.document_id == document_id)
-                .where(ExtractedTable.page_number >= (s["page_start"] or 0))
-                .where(ExtractedTable.page_number <= (s["page_end"] or 10**9))
-                .values(section_id=row.id)
-            )
-        await session.commit()
-
         claim_chunk = (
             await session.execute(
                 select(DocumentChunk)

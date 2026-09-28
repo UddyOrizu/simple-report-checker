@@ -47,12 +47,13 @@ def _split_table_row(line: str) -> list[str]:
     return [strip_inline_markdown(cell.replace("\\|", "|")) for cell in cells]
 
 
-def parse_markdown(markdown: str, paginated: bool = False) -> list[dict]:
+def parse_markdown(markdown: str, paginated: bool = False, first_page: int = 1) -> list[dict]:
     """`paginated`: the markdown carries marker's page separators, so every element gets a
-    page_number (1-based). Without it (DOCX has no page concept) page_number is omitted, matching
-    what parse_docx produces."""
+    page_number, counting from `first_page` (1-based — set when the markdown is one batch of a
+    larger PDF). Without it (DOCX has no page concept) page_number is omitted, matching what
+    parse_docx produces."""
     elements: list[dict] = []
-    page_number = 1
+    page_number = first_page
     paragraph: list[str] = []
     table: list[list[str]] = []
     in_fence = False

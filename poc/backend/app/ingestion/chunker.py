@@ -11,10 +11,9 @@ def chunk_document(elements: list[dict], document_title: str, state: dict | None
     Headings don't become chunks of their own; they update the running section title used to
     build each subsequent chunk's context_capsule.
 
-    `state` (optional) carries {"section_title", "offset"} across calls, so a large document can
-    be chunked page-by-page (see app/ingestion/large_file.py) without holding every page's
-    elements in memory at once, while context_capsule and char offsets stay continuous across the
-    whole document. Omit it to chunk a full element list in one call, as every other caller does.
+    `state` (optional) carries {"section_title", "offset"} across calls, so a document can be
+    chunked in pieces while context_capsule and char offsets stay continuous across the whole
+    document. Omit it to chunk a full element list in one call, as the ingestion pipeline does.
     """
     if state is None:
         state = {"section_title": None, "offset": 0}

@@ -10,8 +10,7 @@ from app.agents.extract_claims import extract_claims_for_document
 from app.agents.verify_claim import verify_claim
 from app.db import async_session
 from app.events.broadcaster import broadcaster
-from app.ingestion.large_file import process_large_pdf
-from app.ingestion.pipeline import finalize_pdf_structure, load_config, run_ingestion, uses_marker_for_pdf
+from app.ingestion.pipeline import load_config, run_ingestion
 from app.llm.client import MissingCredentialsError
 from app.models import Claim, Document, DocumentChunk, DocumentSection, ExtractedTable, Verdict
 
@@ -38,18 +37,10 @@ def _load_yaml(name: str):
 
 
 async def _ingest(document_id: uuid.UUID, path: str, config: dict) -> None:
-    """PDFs go through Phase 2.7's page-by-page path — thread-offloaded parsing/OCR, bounded
-    memory, and real ingest_progress events, which matter most on exactly the large documents
-    this branch exists for. DOCX files go through the simpler whole-document path (Phase 2.6);
-    python-docx has no per-page concept to stream over in the first place. PDFs converted by
-    marker also take the whole-document path: marker converts a document in one batched pass
-    (layout/reading order span pages), so there's no page-by-page stream to hook into."""
-    if path.lower().endswith(".pdf") and not uses_marker_for_pdf(config):
-        result = await process_large_pdf(document_id, path, os.path.basename(path), config)
-        await finalize_pdf_structure(document_id, path, result["page_count"], config, elements=result["elements"])
-    else:
-        await run_ingestion(document_id, path, config)
-        await broadcaster.publish(document_id, {"event": "ingest_complete"})
+    """Every document — PDF or DOCX, one page or hundreds — takes the same path: run_ingestion
+    converts it in page batches (publishing ingest_progress, thread-offloaded so the API stays
+    responsive) and then indexes it as a whole (publishing ingest_complete)."""
+    await run_ingestion(document_id, path, config)
 
 
 async def process_document(document_id: uuid.UUID, path: str) -> None:
