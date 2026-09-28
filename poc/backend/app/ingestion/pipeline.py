@@ -46,9 +46,11 @@ def parse_document(path: str, config: dict) -> tuple[list[dict], int, str]:
     ext = os.path.splitext(path)[1].lower()
     if ext == ".docx":
         elements = parse_docx(path)
+        elements = _clean_parsed_elements(elements)
         return elements, estimate_docx_page_count(elements), "docx"
     if ext == ".pdf":
         elements = parse_pdf(path, config)
+        elements = _clean_parsed_elements(elements)
         with fitz.open(path) as doc:
             page_count = len(doc)
         return elements, page_count, "pdf"
@@ -134,6 +136,38 @@ async def run_ingestion(document_id: uuid.UUID, path: str, config: dict) -> dict
         "chunks": chunks,
         "sections": sections,
     }
+
+
+def _clean_text(text: str) -> str:
+    if not text:
+        return ""
+    # Normalize line endings, remove BOM, collapse whitespace
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\ufeff", "")
+    # Collapse multiple newlines into a single newline, then collapse remaining whitespace
+    import re
+
+    text = re.sub(r"\n{2,}", "\n", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _clean_parsed_elements(elements: list[dict]) -> list[dict]:
+    """Normalize text in parsed elements immediately after file parsing so downstream
+    chunking and extraction sees consistent whitespace and no stray linebreaks.
+    Handles paragraphs, headings, and table cell text.
+    """
+    cleaned: list[dict] = []
+    for el in elements:
+        if el.get("type") in ("paragraph", "heading"):
+            el = {**el, "text": _clean_text(el.get("text", ""))}
+        elif el.get("type") == "table":
+            # table `data` is a list of rows; each row is list of cell strings
+            table = el.get("data") or []
+            cleaned_table = [[_clean_text(cell) for cell in row] for row in table]
+            el = {**el, "data": cleaned_table}
+        cleaned.append(el)
+    return cleaned
 
 
 async def _persist(

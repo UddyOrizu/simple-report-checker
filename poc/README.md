@@ -30,7 +30,7 @@ Wait for both services to report healthy, then run migrations once:
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
-python -m spacy download en_core_web_trf
+python -m spacy download en_core_web_sm en_core_web_trf
 alembic upgrade head
 ```
 

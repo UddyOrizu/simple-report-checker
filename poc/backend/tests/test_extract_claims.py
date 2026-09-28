@@ -4,6 +4,7 @@ import pytest_asyncio
 import yaml
 from sqlalchemy import select
 
+from app.agents.citation_extractor import extract_citations_from_text
 from app.agents.extract_claims import _has_groundable_entity, direct_claim, extract_claims_for_document, split_sentences
 from app.events.broadcaster import broadcaster
 from app.models import Claim, Document, DocumentChunk, DocumentSection
@@ -167,3 +168,21 @@ async def test_resumed_extraction_skips_a_chunk_already_marked_claims_extracted(
     claims = await extract_claims_for_document(db_session, simple_sentence_document, _registry())
 
     assert claims == []
+
+
+def test_extract_citations_from_text_extracts_reference_pairs():
+    text = """
+    We grew 12% in 2024 [1,2].
+
+    ## References
+    1. Acme Inc. Annual Report 2024. https://example.com/acme
+    2. Gartner, Market Outlook 2024.
+    """
+
+    result = extract_citations_from_text(text)
+
+    assert result["reference_section_found"] is True
+    assert result["total_references"] == 2
+    assert result["total_intext_citations"] == 2
+    assert {item["number"] for item in result["instances"]} == {1, 2}
+    assert result["citations"][0]["urls"] == ["https://example.com/acme"]

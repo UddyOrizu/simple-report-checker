@@ -370,8 +370,25 @@ async def verify_claim_via_agents(session: AsyncSession, claim: Claim, config: d
     for result in await asyncio.gather(*tasks):
         evidence.extend(result)
 
-    verifier_result, verifier_prompt, verifier_raw, verifier_tools = await run_verifier(session, claim, evidence)
-    challenger_result, challenger_prompt, challenger_raw, challenger_tools = await run_challenger(session, claim, evidence, verifier_result)
+    # Limit evidence passed to verifier/challenger to stay under OpenAI's context limit
+    MAX_EVIDENCE_ITEMS_FOR_VERIFICATION = 5
+    MAX_EVIDENCE_SNIPPET_LENGTH = 500
+
+
+    def _trim_evidence(evidence: list[Evidence]) -> list[Evidence]:
+        """Reduce evidence to fit within token budget: keep top N items and cap snippet lengths."""
+        # Keep only the top N highest-authority items
+        trimmed = sorted(evidence, key=lambda e: e.authority_score or 0, reverse=True)[:MAX_EVIDENCE_ITEMS_FOR_VERIFICATION]
+        # Cap each snippet to avoid explosion
+        for item in trimmed:
+            if item.content_snippet and len(item.content_snippet) > MAX_EVIDENCE_SNIPPET_LENGTH:
+                item.content_snippet = item.content_snippet[:MAX_EVIDENCE_SNIPPET_LENGTH] + "..."
+        return trimmed
+
+    trimmed_evidence = _trim_evidence(evidence)
+
+    verifier_result, verifier_prompt, verifier_raw, verifier_tools = await run_verifier(session, claim, trimmed_evidence)
+    challenger_result, challenger_prompt, challenger_raw, challenger_tools = await run_challenger(session, claim, trimmed_evidence, verifier_result)
     reconciled = reconcile(verifier_result, challenger_result, claim.domain)
 
     config_hash = compute_config_hash()

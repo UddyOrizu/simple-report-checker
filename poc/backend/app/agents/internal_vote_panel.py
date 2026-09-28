@@ -5,7 +5,8 @@ from collections import Counter
 from dataclasses import dataclass
 
 from agno.agent import Agent
-from agno.models.huggingface import HuggingFace
+from agno.models.openai import OpenAIChat
+from agno.tools.exa import ExaTools
 
 from app.agents.reconcile import derive_severity
 from app.llm.client import MissingCredentialsError, build_model, load_prompt
@@ -20,12 +21,16 @@ from app.schemas.verification import VerdictValue, VerifierResult
 # the way a distinct model's vote is.
 INTERNAL_VERIFICATION_VOTERS = [v.strip() for v in os.getenv("INTERNAL_VERIFICATION_VOTERS", "standard,mini,fino1").split(",") if v.strip()]
 
-FINO1_MODEL_ID = os.getenv("FINO1_MODEL_ID", "TheFinAI/Fin-o1-8B")
+FINO1_MODEL_ID = os.getenv("AZURE_OPENAI_MODEL_ID", "grok-4-1-fast-reasoning")
 # Unset by default: a dedicated HF Inference Endpoint URL, if the model is deployed that way
 # rather than through HF's shared serverless Inference Providers routing.
-HF_INFERENCE_BASE_URL = os.getenv("HF_INFERENCE_BASE_URL") or None
 
 _INSTRUCTIONS = load_prompt("verifier")
+
+tools = [ExaTools(
+        show_results=True, 
+        text_length_limit=1000
+        )]
 
 # Fin-o1-8B has no native structured-output/tool-calling support the way OpenAI/Anthropic do
 # (agno.models.huggingface.HuggingFace reports supports_native_structured_outputs=False), so its
@@ -60,7 +65,7 @@ def _format_prompt(claim_text: str, claim_type: str, scope: str, evidence_bundle
 async def _vote_structured(voter: str, tier: str, prompt: str) -> VoteOutcome:
     """standard/mini voters — whichever provider LLM_PROVIDER selects, using agno's native
     structured-output support."""
-    agent = Agent(model=build_model(tier), output_schema=VerifierResult, markdown=False)
+    agent = Agent(model=build_model(tier), output_schema=VerifierResult, markdown=False,tools=tools,compress_tool_results=True)
     response = await agent.arun(prompt)
     result: VerifierResult = response.content
     return VoteOutcome(
@@ -89,12 +94,13 @@ def _parse_json_verdict(raw: str) -> tuple[VerdictValue, float, str]:
 
 
 async def _vote_fino1(prompt: str) -> VoteOutcome:
-    if not os.getenv("HF_TOKEN"):
-        raise MissingCredentialsError("HF_TOKEN is not set — the fino1 voter is BLOCKED-CREDENTIALS")
+    # Use Azure OpenAI for the fino1 voter. Require AZURE_OPENAI_KEY to be set.
+    if not os.getenv("AZURE_OPENAI_KEY"):
+        raise MissingCredentialsError("AZURE_OPENAI_KEY is not set — the fino1 voter is BLOCKED-CREDENTIALS")
 
-    
-    model = HuggingFace(id=FINO1_MODEL_ID, api_key=os.getenv("HF_TOKEN"), base_url=HF_INFERENCE_BASE_URL)
-    agent = Agent(model=model, markdown=False)
+    base_url = os.getenv("AZURE_OPENAI_BASE_URL", "https://api.openai.azure.com/")
+    model = OpenAIChat(id=FINO1_MODEL_ID, api_key=os.getenv("AZURE_OPENAI_KEY"), base_url=base_url)
+    agent = Agent(model=model, markdown=False,tools=tools,compress_tool_results=True)
     full_prompt = prompt + _JSON_OUTPUT_SUFFIX
     response = await agent.arun(full_prompt)
     raw = str(response.content)

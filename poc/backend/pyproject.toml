@@ -36,6 +36,8 @@ dependencies = [
     "yfinance==1.7.0",
     "markdownify>=0.13",
     "huggingface_hub>=0.26",
+    "exa-py>=2.22.0",
+    "truststore",
 ]
 
 [tool.pytest.ini_options]

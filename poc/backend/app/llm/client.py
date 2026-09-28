@@ -22,17 +22,25 @@ PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__fil
 # model (decomposition, verification, challenging); "mini" is the cheap/fast tier the navigator
 # uses for a much simpler section-picking task. Any of the four model IDs can be overridden
 # independently via env var without touching code.
-LLM_PROVIDER: Literal["openai", "anthropic"] = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()  # type: ignore[assignment]
+LLM_PROVIDER: Literal["openai", "anthropic", "azure"] = os.getenv("LLM_PROVIDER", "anthropic").strip().lower()  # type: ignore[assignment]
 
 _OPENAI_MODEL_IDS: dict[Tier, str] = {
     "standard": os.getenv("OPENAI_MODEL_ID", "gpt-4o"),
-    "mini": os.getenv("OPENAI_MINI_MODEL_ID", "gpt-4o-mini"),
+    "mini": os.getenv("OPENAI_MINI_MODEL_ID", "o3"),
 }
 _ANTHROPIC_MODEL_IDS: dict[Tier, str] = {
     "standard": os.getenv("ANTHROPIC_MODEL_ID", "claude-sonnet-4-5-20250929"),
     "mini": os.getenv("ANTHROPIC_MINI_MODEL_ID", "claude-haiku-4-5-20251001"),
 }
-_CREDENTIAL_ENV_VARS = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+
+# Azure OpenAI model ids / creds
+_AZURE_MODEL_IDS: dict[Tier, str] = {
+    "standard": os.getenv("AZURE_OPENAI_MODEL_ID", os.getenv("OPENAI_MODEL_ID", "gpt-4o")),
+    "mini": os.getenv("AZURE_OPENAI_MINI_MODEL_ID", os.getenv("OPENAI_MINI_MODEL_ID", "gpt-4o-mini")),
+}
+
+# Map provider -> credential env var name
+_CREDENTIAL_ENV_VARS = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "azure": "AZURE_OPENAI_KEY"}
 
 
 class MissingCredentialsError(RuntimeError):
@@ -59,7 +67,7 @@ def require_llm_credentials() -> None:
     deep inside agno, or worse, an import-time crash that would take down stages that don't need
     an LLM at all."""
     if LLM_PROVIDER not in _CREDENTIAL_ENV_VARS:
-        raise ValueError(f"Unknown LLM_PROVIDER {LLM_PROVIDER!r} — expected 'openai' or 'anthropic'")
+        raise ValueError(f"Unknown LLM_PROVIDER {LLM_PROVIDER!r} — expected 'openai', 'anthropic' or 'azure'")
     env_var = _CREDENTIAL_ENV_VARS[LLM_PROVIDER]
     if not os.environ.get(env_var):
         raise MissingCredentialsError(f"{env_var} is not set — this pipeline stage is BLOCKED-CREDENTIALS")
@@ -78,7 +86,15 @@ def build_model(tier: Tier = "standard"):
         return OpenAIChat(
             id=_OPENAI_MODEL_IDS[tier],
             api_key=os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("OPENAI_BASE_URL", "https://eu.api.openai.com/v1"),
+            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        )
+    if LLM_PROVIDER == "azure":
+        # Azure OpenAI uses a different endpoint and key. The `id` here should be the
+        # deployment name configured in Azure, not the model family name.
+        return OpenAIChat(
+            id=_AZURE_MODEL_IDS[tier],
+            api_key=os.getenv("AZURE_OPENAI_KEY"),
+            base_url=os.getenv("AZURE_OPENAI_BASE_URL", "https://api.openai.azure.com/"),
         )
     raise ValueError(f"Unknown LLM_PROVIDER {LLM_PROVIDER!r} — expected 'openai' or 'anthropic'")
 

@@ -6,7 +6,9 @@ import uuid
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 
+from app.agents.citation_extractor import citation_context_for_text, extract_citations_from_text
 from app.agents.decomposer import decompose_sentence
 from app.agents.router import route_claim
 from app.events.broadcaster import broadcaster
@@ -29,6 +31,9 @@ EXTRACTION_LLM_CONCURRENCY = 8
 # boundary, but that means the same sentence(s) can appear in two chunks' text and get decomposed
 # into claims twice. Treat claims this similar, from consecutive chunks, as duplicates.
 DUPLICATE_CLAIM_SIMILARITY_THRESHOLD = 0.92
+# When checking existing persisted claims in the DB, consider anything at or above this
+# cosine similarity to be a duplicate of an existing claim and skip persisting.
+EXISTING_CLAIM_SIMILARITY_THRESHOLD = DUPLICATE_CLAIM_SIMILARITY_THRESHOLD
 
 _BOILERPLATE_SECTION_MARKERS = (
     "disclaimer",
@@ -161,13 +166,14 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
     ANTHROPIC_API_KEY/OPENAI_API_KEY is missing: LLM-dependent claims for that sentence are
     skipped rather than retried.
     """
-    chunks = (
-        await session.execute(
-            select(DocumentChunk).where(
-                DocumentChunk.document_id == document_id, DocumentChunk.claims_extracted.is_(False)
-            )
-        )
+    all_chunks = (
+        await session.execute(select(DocumentChunk).where(DocumentChunk.document_id == document_id))
     ).scalars().all()
+    chunks = [chunk for chunk in all_chunks if not chunk.claims_extracted]
+
+    document_text = "\n\n".join(chunk.chunk_text for chunk in all_chunks if chunk.chunk_text)
+    citation_summary = extract_citations_from_text(document_text)
+    citation_context = citation_context_for_text(citation_summary)
 
     persisted: list[Claim] = []
     embedding_service = EmbeddingService()
@@ -196,7 +202,11 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
             header, rows = _table_rows(chunk.chunk_text)
             items = [(row, True) for row in rows]
         else:
-            sentences = await asyncio.to_thread(split_sentences, chunk.chunk_text)
+            # Normalize newlines and line breaks to spaces before sentence splitting so
+            # the sentencizer doesn't treat hard line breaks as sentence boundaries.
+            cleaned_text = re.sub(r"\s*\n+\s*", " ", chunk.chunk_text or "")
+            cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
+            sentences = await asyncio.to_thread(split_sentences, cleaned_text)
             items = [(s, False) for s in sentences]
             header = None
 
@@ -275,7 +285,9 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
                 context = (
                     f"{json.dumps({k: v for k, v in claim_data.items() if not k.startswith('_')}, indent=2)}\n"
                     f"domain: {domain_result['domain']} domain confidence: {domain_result['confidence']} "
-                    f"domain source: {domain_result['source']}\n{_format_retrieval_context(hits)}"
+                    f"domain source: {domain_result['source']}\n"
+                    f"{_format_retrieval_context(hits)}\n"
+                    f"{citation_context_for_text(citation_summary, claim_data['text'])}"
                 )
                 async with sem:
                     try:
@@ -287,25 +299,102 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
 
         finalized = await asyncio.gather(*(_finalize(cd, emb) for cd, emb in survivors))
 
+        logger = logging.getLogger(__name__)
         for result in finalized:
             if result is None:
                 continue
             claim_data, embedding, domain_result, merged_entities, route = result
+
+            # Normalize routing decision: the LLM client or downstream callers may
+            # return a RoutingDecision instance, a dict, or occasionally a raw
+            # JSON/string. Coerce into discrete values used below to avoid
+            # AttributeError when accessing `.route`.
+            route_value = None
+            routing_reasoning = ""
+            suggested_queries: list[str] = []
+
+            # str (possibly JSON) -> try to parse, otherwise treat as literal route
+            if isinstance(route, str):
+                try:
+                    parsed = json.loads(route)
+                    if isinstance(parsed, dict):
+                        route_value = parsed.get("route")
+                        routing_reasoning = parsed.get("reasoning", "")
+                        suggested_queries = parsed.get("suggested_search_queries", []) or []
+                    else:
+                        route_value = parsed
+                except Exception:
+                    route_value = route
+            elif isinstance(route, dict):
+                route_value = route.get("route")
+                routing_reasoning = route.get("reasoning", "")
+                suggested_queries = route.get("suggested_search_queries", []) or []
+            else:
+                # Pydantic/BaseModel or similar objects supporting attribute access
+                route_value = getattr(route, "route", None)
+                routing_reasoning = getattr(route, "reasoning", "")
+                suggested_queries = getattr(route, "suggested_search_queries", []) or []
+
+            if not route_value:
+                logger.warning("Unable to determine routing decision route for claim: %s (raw: %r)", claim_data.get("text"), route)
+            # Check for an existing identical claim text in this document — this avoids
+            # re-inserting exact duplicates across re-runs.
+            existing_same_text = (
+                await session.execute(
+                    select(Claim).where(Claim.document_id == document_id, Claim.claim_text == claim_data["text"]) 
+                )
+            ).scalar_one_or_none()
+            if existing_same_text is not None:
+                logger.info("Skipping duplicate claim (exact text match) for document %s: %s", document_id, claim_data.get("text"))
+                continue
+
+            # Check for semantically very similar existing claims (embedding cosine similarity)
+            # Only run if we have an embedding for the new claim.
+            is_semantic_duplicate = False
+            if embedding:
+                try:
+                    distance = Claim.embedding.cosine_distance(embedding)
+                    stmt = (
+                        select(Claim, distance.label("distance"))
+                        .where(Claim.document_id == document_id)
+                        .where(Claim.embedding.is_not(None))
+                        .where(distance.is_not(None))
+                        .order_by(distance)
+                        .limit(1)
+                    )
+                    rows = (await session.execute(stmt)).all()
+                    if rows:
+                        existing_claim, existing_distance = rows[0]
+                        similarity = 1 - existing_distance
+                        if similarity >= EXISTING_CLAIM_SIMILARITY_THRESHOLD:
+                            logger.info(
+                                "Skipping duplicate claim (semantic match %.3f) for document %s: %s",
+                                similarity,
+                                document_id,
+                                claim_data.get("text"),
+                            )
+                            is_semantic_duplicate = True
+                except Exception:
+                    logger.exception("Error checking existing claims for semantic duplicate; continuing to persist new claim.")
+
+            if is_semantic_duplicate:
+                continue
+
             claim = Claim(
                 document_id=document_id,
                 chunk_id=chunk.id,
                 claim_text=claim_data["text"],
                 source_span=claim_data["source_span"],
                 claim_type=claim_data["claim_type"],
-                scope=route.route,
+                scope=route_value,
                 requires=claim_data["requires"],
                 domain=domain_result["domain"],
                 domain_confidence=domain_result["confidence"],
                 domain_source=domain_result["source"],
                 cites_external_source=claim_data.get("cites_external_source", False),
                 is_opinion_or_unverifiable=claim_data.get("is_opinion_or_unverifiable", False),
-                routing_decision=route.reasoning,
-                suggested_search_queries=route.suggested_search_queries,
+                routing_decision=routing_reasoning,
+                suggested_search_queries=suggested_queries,
                 entities=merged_entities,
                 embedding=embedding,
             )

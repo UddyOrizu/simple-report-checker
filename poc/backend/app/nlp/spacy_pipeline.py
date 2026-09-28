@@ -26,7 +26,7 @@ def get_nlp() -> Language:
     clause-decomposition gating, entity extraction). Pure sentence-boundary detection should use
     get_sentencizer_nlp() instead.
     """
-    nlp = spacy.load("en_core_web_trf")
+    nlp = spacy.load("en_core_web_sm")
     ruler = nlp.add_pipe("entity_ruler", before="ner")
     ruler.add_patterns(load_jsonl(os.path.join(GAZETTEERS_DIR, "financial_terms.jsonl")))
     ruler.add_patterns(load_jsonl(os.path.join(GAZETTEERS_DIR, "legal_terms.jsonl")))
@@ -47,10 +47,24 @@ def get_sentencizer_nlp() -> Language:
 
 
 def sentence_vector(doc: Doc) -> np.ndarray:
-    """en_core_web_trf ships no static word-vector table (doc.vector is empty for a trf
-    pipeline), so this mean-pools the transformer's last hidden layer across tokens instead —
-    a serviceable sentence embedding for cosine-similarity use (see app/nlp/domain_router.py)."""
-    return doc._.trf_data.last_hidden_layer_state.dataXd.mean(axis=0)
+    """Get a sentence embedding. For en_core_web_sm (non-transformer), this uses the static
+    word-vector table averaged across tokens. Provides a serviceable sentence embedding for
+    cosine-similarity use (see app/nlp/domain_router.py).
+    
+    Falls back to transformer embeddings if available (en_core_web_trf), but en_core_web_sm
+    is the primary model to avoid memory issues with large documents."""
+    # Try transformer embeddings first if available
+    if hasattr(doc._, "trf_data"):
+        return doc._.trf_data.last_hidden_layer_state.dataXd.mean(axis=0)
+    # Fall back to static word vectors (en_core_web_sm, en_core_web_md)
+    if doc.vector is not None and not np.all(doc.vector == 0):
+        return doc.vector
+    # Final fallback: mean of token vectors
+    vectors = np.array([token.vector for token in doc if token.has_vector])
+    if len(vectors) > 0:
+        return np.mean(vectors, axis=0)
+    # If no vectors available, return a zero vector of appropriate dimension
+    return np.zeros(96)  # en_core_web_sm default vector dimension
 
 
 def extract_entities(text: str) -> list[dict]:
