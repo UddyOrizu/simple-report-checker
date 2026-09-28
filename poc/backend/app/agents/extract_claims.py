@@ -293,7 +293,19 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
                     try:
                         route = await route_claim(claim_data["text"], context)
                     except MissingCredentialsError:
-                        return None
+                        # No LLM to route with: keep the claim (it stays "pending" until it can be
+                        # verified) rather than dropping it. Provisionally "both" — without a key,
+                        # this branch is reached precisely because the claim carries a groundable
+                        # entity, so defaulting it to internal-only would be the silent
+                        # under-checking _has_groundable_entity exists to prevent.
+                        route = RoutingDecision(
+                            claim_id="",
+                            route="both",
+                            confidence=0.0,
+                            reasoning="Routing skipped — no LLM credentials (BLOCKED-CREDENTIALS). Provisional scope "
+                            "'both'; reprocess the document once a key is set to route it properly.",
+                            suggested_search_queries=[],
+                        )
 
             return claim_data, embedding, domain_result, merged_entities, route
 

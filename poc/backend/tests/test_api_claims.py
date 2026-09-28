@@ -12,6 +12,19 @@ HAS_API_KEY = has_llm_credentials()
 requires_llm = pytest.mark.skipif(not HAS_API_KEY, reason="no LLM credentials set for the active LLM_PROVIDER — LLM stage is BLOCKED-CREDENTIALS")
 
 
+@pytest.fixture
+def deterministic_api_routing(monkeypatch, deterministic_registry):
+    """Routes (financial, statistical) deterministically for the reverify endpoint, which reads
+    domain_registry.yaml itself — these tests exercise the no-LLM deterministic path."""
+    import app.api.claims as claims_api
+
+    real_load_yaml = claims_api._load_yaml
+    monkeypatch.setattr(
+        claims_api, "_load_yaml",
+        lambda name: deterministic_registry if name == "domain_registry.yaml" else real_load_yaml(name),
+    )
+
+
 async def _client():
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://test")
@@ -73,7 +86,7 @@ async def test_get_claim_traces_empty_for_unverified_claim(example_a_claim):
     assert response.json() == []
 
 
-async def test_reverify_without_api_key_returns_503_not_500(example_a_claim):
+async def test_reverify_without_api_key_returns_503_not_500(example_a_claim, deterministic_api_routing):
     """example_a_claim's (financial, statistical) pair resolves deterministically per
     domain_registry.yaml, so this actually exercises the no-LLM path — add a second, agent-path
     claim scenario isn't needed here since 503 vs 500 is the thing under test, and the
@@ -88,7 +101,7 @@ async def test_reverify_without_api_key_returns_503_not_500(example_a_claim):
     assert body["reconciled"]["resolved_by"] == "deterministic"
 
 
-async def test_get_claim_after_deterministic_reverify_shows_verdict_and_evidence(example_a_claim):
+async def test_get_claim_after_deterministic_reverify_shows_verdict_and_evidence(example_a_claim, deterministic_api_routing):
     async with await _client() as client:
         await client.post(f"/claims/{example_a_claim}/reverify")
         response = await client.get(f"/claims/{example_a_claim}")

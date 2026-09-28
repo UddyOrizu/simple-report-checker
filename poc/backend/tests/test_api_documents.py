@@ -150,7 +150,10 @@ async def test_document_claims_and_runs_listings_reflect_a_real_processed_docume
     assert claims_response.status_code == 200
     claims = claims_response.json()
     assert len(claims) == 1  # only the one simple, non-decomposable sentence extracts without a key
-    assert claims[0]["scope"] == "internal"
+    # "…into the fourth quarter" carries a DATE entity, so it needs the router; with no key it's
+    # kept pending with the conservative provisional scope rather than dropped.
+    assert claims[0]["scope"] == "both"
+    assert claims[0]["status"] == "pending"
 
     assert runs_response.status_code == 200
     runs = runs_response.json()

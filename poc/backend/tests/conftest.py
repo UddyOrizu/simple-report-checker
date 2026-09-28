@@ -2,6 +2,7 @@ import os
 
 import pytest
 import pytest_asyncio
+import yaml
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.db
@@ -46,3 +47,19 @@ async def db_session() -> AsyncSession:
 @pytest.fixture
 def fixtures_dir():
     return os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+@pytest.fixture
+def deterministic_registry() -> list[dict]:
+    """config/domain_registry.yaml with (financial, statistical) routed to the deterministic
+    arithmetic verifier. Tests of that path pin it here rather than depend on the live config,
+    which may route the pair to the agent path instead."""
+    path = os.path.join(os.path.dirname(__file__), "..", "config", "domain_registry.yaml")
+    with open(path) as f:
+        registry = yaml.safe_load(f)
+    return [
+        {**row, "verification_method": "deterministic"}
+        if (row.get("domain"), row.get("claim_type")) == ("financial", "statistical")
+        else row
+        for row in registry
+    ]

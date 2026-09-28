@@ -58,7 +58,7 @@ Docker:
 | `DATABASE_URL` | `postgresql+asyncpg://poc:poc@localhost:5433/claim_checker` | Postgres connection (async driver) |
 | `LLM_PROVIDER` | `anthropic` | Which backend every Agno agent uses: `anthropic` or `openai` |
 | `ANTHROPIC_API_KEY` | *(empty)* | Required for any LLM-backed stage when `LLM_PROVIDER=anthropic` |
-| `OPENAI_API_KEY` | *(empty)* | Required for any LLM-backed stage when `LLM_PROVIDER=openai` |
+| `OPENAI_API_KEY` | *(empty)* | Required for any LLM-backed stage when `LLM_PROVIDER=openai`. Also enables embeddings (always OpenAI's `text-embedding-3-small`, whatever `LLM_PROVIDER` is); without it, chunks are stored unembedded and embedding search / claim dedup are skipped |
 | `OPENAI_BASE_URL` | `https://eu.api.openai.com/v1` | Only used when `LLM_PROVIDER=openai`; point at a proxy/gateway if needed |
 | `ANTHROPIC_MODEL_ID` / `ANTHROPIC_MINI_MODEL_ID` | `claude-sonnet-4-5-20250929` / `claude-haiku-4-5-20251001` | Override the standard/mini model tier for Anthropic |
 | `OPENAI_MODEL_ID` / `OPENAI_MINI_MODEL_ID` | `gpt-4o` / `gpt-4o-mini` | Override the standard/mini model tier for OpenAI |

@@ -72,7 +72,7 @@ async def lookup_internal_evidence(session: AsyncSession, claim: Claim) -> list[
 async def query_similar(
     session: AsyncSession,
     document_id: uuid.UUID,
-    query_embedding: list[float],
+    query_embedding: list[float] | None,
     top_k: int = 5,
     exclude_chunk_id: uuid.UUID | None = None,
 ) -> list[dict]:
@@ -82,8 +82,8 @@ async def query_similar(
     (min_chunk_index, max_chunk_index) excludes the chunk(s) a claim was originally extracted
     from, so a claim is never "verified" against its own source sentence."""
 
-    print(f"query_similar: document_id={document_id}, top_k={top_k}, exclude_chunk_id={exclude_chunk_id}")
-    print(f"query_similar: length={len(query_embedding)} query_embedding={query_embedding}")
+    if query_embedding is None:
+        return []  # embeddings disabled (no OPENAI_API_KEY) — nothing to compare against
 
     distance = DocumentChunk.embedding.cosine_distance(query_embedding)
     stmt = (
@@ -105,8 +105,8 @@ async def query_similar(
             "chunk_id": str(chunk.id),
             "text": chunk.chunk_text,
             "page_number": chunk.page_number,
-            "start_sentence_index": chunk.char_start,
-            "end_sentence_index": chunk.char_end,
+            "char_start": chunk.char_start,
+            "char_end": chunk.char_end,
             "similarity": 1 - chunk_distance,
         }
         for chunk, chunk_distance in rows
@@ -130,6 +130,8 @@ async def semantic_internal_lookup(
         return []
 
     service = embedding_service or EmbeddingService()
+    if not getattr(service, "enabled", True):
+        return []  # no OPENAI_API_KEY — no embeddings to search (chunks were stored without them too)
     query_embeddings = await service.embed_texts(requires)
 
     seen_chunk_ids: set[str] = set()

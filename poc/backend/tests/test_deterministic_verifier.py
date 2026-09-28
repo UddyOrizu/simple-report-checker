@@ -70,8 +70,8 @@ def test_extract_current_prior():
     assert prior == 100_000_000
 
 
-def test_resolves_deterministically_true_for_financial_statistical():
-    assert resolves_deterministically("financial", "statistical", _registry()) is True
+def test_resolves_deterministically_true_for_financial_statistical(deterministic_registry):
+    assert resolves_deterministically("financial", "statistical", deterministic_registry) is True
 
 
 def test_resolves_deterministically_false_for_financial_causal():

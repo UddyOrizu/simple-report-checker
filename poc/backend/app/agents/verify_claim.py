@@ -366,14 +366,24 @@ async def verify_claim_via_agents(session: AsyncSession, claim: Claim, config: d
     if claim.scope == "internal":
         return await _verify_internal_claim_via_vote_panel(session, claim)
 
+    # The verifier/challenger pair needs the LLM whatever the evidence turns up — fail fast with
+    # the clean BLOCKED-CREDENTIALS error before starting any evidence gathering.
+    require_llm_credentials()
+
     tasks = []
     if claim.scope in ("internal", "both"):
         tasks.append(_gather_internal_evidence(session, claim))
     if claim.scope in ("external", "both"):
         tasks.append(_gather_external_evidence(claim))
 
+    # return_exceptions=True: if one side fails, plain gather would re-raise at once while the
+    # internal side is still mid-query on `session` — closing the session under it then fails
+    # with asyncpg's "another operation is in progress". Let both finish, then re-raise.
     evidence: list[Evidence] = []
-    for result in await asyncio.gather(*tasks):
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
         evidence.extend(result)
 
     # Limit evidence passed to verifier/challenger to stay under OpenAI's context limit

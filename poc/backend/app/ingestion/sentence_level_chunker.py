@@ -1,5 +1,8 @@
 import asyncio
+import functools
 import hashlib
+import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
@@ -9,6 +12,8 @@ import tiktoken
 from openai import AsyncOpenAI
 
 from app.nlp.spacy_pipeline import get_sentencizer_nlp
+
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------------
@@ -57,6 +62,7 @@ class Chunk:
     end_sentence_index: int
     page: Optional[int] = None
     embedding: Optional[List[float]] = None
+    char_start: int = 0  # offset of the chunk's first sentence within the text that was split
 
 
 def split_sentences(document_text: str) -> List[Sentence]:
@@ -121,6 +127,7 @@ def chunk_sentences(
                 start_sentence_index=window[0].index,
                 end_sentence_index=window[-1].index,
                 page=window[0].page,
+                char_start=window[0].char_start,
             )
         )
         chunk_index += 1
@@ -143,6 +150,11 @@ def _guard_token_limit(text: str, max_tokens: int = EMBEDDING_MAX_TOKENS - 100) 
 # OpenAI embeddings — batched, large-document safe
 # ----------------------------------------------------------------------------
 
+@functools.lru_cache(maxsize=1)
+def _warn_embeddings_disabled() -> None:
+    logger.warning("OPENAI_API_KEY is not set — embeddings are disabled; semantic lookup and claim dedup will be skipped")
+
+
 class EmbeddingService:
     """
     Wraps OpenAI embeddings with token-aware batching, bounded concurrency, and
@@ -151,8 +163,16 @@ class EmbeddingService:
     """
 
     def __init__(self, client: Optional[AsyncOpenAI] = None, model: str = EMBEDDING_MODEL):
-        self.client = client or AsyncOpenAI()
+        # Embeddings are always OpenAI's, whichever LLM_PROVIDER is set. With no OPENAI_API_KEY,
+        # the service is disabled rather than failing every call: embed_texts/embed_text return
+        # None, chunks are stored without an embedding (the column is nullable), and the
+        # embedding-based steps (semantic lookup, claim dedup) skip themselves — the README's
+        # "ingestion works fully without an API key" contract.
+        self.enabled = client is not None or bool(os.environ.get("OPENAI_API_KEY"))
+        self.client = client or (AsyncOpenAI() if self.enabled else None)
         self.model = model
+        if not self.enabled:
+            _warn_embeddings_disabled()
 
     async def embed_chunks(self, chunks: List[Chunk], max_concurrency: int = 4) -> List[Chunk]:
         batches = self._build_batches(chunks)
@@ -202,23 +222,27 @@ class EmbeddingService:
                 await asyncio.sleep(delay)
                 delay *= 2  # exponential backoff
 
-    async def embed_text(self, text: str) -> List[float]:
+    async def embed_text(self, text: str) -> Optional[List[float]]:
         """Single-text embedding — used to embed one claim at routing/query time, where a
         standalone lookup embedding is genuinely needed on its own. For embedding many texts at
         once (a document's chunks, a batch of extracted claims), use embed_texts instead — one
         HTTP round trip per batch instead of one per text."""
+        if not self.enabled:
+            return None
         text = _guard_token_limit(text)
         response = await self.client.embeddings.create(model=self.model, input=[text])
         return response.data[0].embedding
 
-    async def embed_texts(self, texts: List[str], max_concurrency: int = 4) -> List[List[float]]:
+    async def embed_texts(self, texts: List[str], max_concurrency: int = 4) -> List[Optional[List[float]]]:
         """Batched embedding for a list of plain strings, in original order. Thin wrapper around
         embed_chunks (which already implements token-aware batching, bounded concurrency, and
         retry-with-backoff) for callers that just have raw text, not Chunk dataclasses — document
         ingestion's chunk list and a document's extracted claims are both this shape."""
         if not texts:
             return []
-        wrapped = [Chunk(chunk_index=i, text=t, start_sentence_index=0, end_sentence_index=0) for i, t in enumerate(texts)]
+        if not self.enabled:
+            return [None] * len(texts)
+        wrapped =[Chunk(chunk_index=i, text=t, start_sentence_index=0, end_sentence_index=0) for i, t in enumerate(texts)]
         await self.embed_chunks(wrapped, max_concurrency=max_concurrency)
         return [c.embedding for c in wrapped]
 

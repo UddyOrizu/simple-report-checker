@@ -28,9 +28,8 @@ def chunk_document(elements: list[dict], document_title: str, state: dict | None
             state["offset"] += len(text) + 1
             continue
 
-        char_start = state["offset"]
-        char_end = state["offset"] + len(text)
-        state["offset"] = char_end + 1
+        element_start = state["offset"]
+        state["offset"] = element_start + len(text) + 1
         section_title = state["section_title"]
 
         sentences = split_sentences(text)
@@ -48,8 +47,11 @@ def chunk_document(elements: list[dict], document_title: str, state: dict | None
                     else document_title
                 ),
                 "page_number": element.get("page_number"),
-                "char_start": sentence_chunk.start_sentence_index,
-                "char_end": sentence_chunk.end_sentence_index,
+                # Character offsets into the whole document's text, so chunks sort into document
+                # order (chunk_sweep relies on this). Consecutive chunks of one long paragraph
+                # overlap by CHUNK_OVERLAP_SENTENCES sentences, so their ranges overlap too.
+                "char_start": element_start + sentence_chunk.char_start,
+                "char_end": element_start + sentence_chunk.char_start + len(sentence_chunk.text),
                 "embedding": [],
             }
             if "ocr_confidence" in element:

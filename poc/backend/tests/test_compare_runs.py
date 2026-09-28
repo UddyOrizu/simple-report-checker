@@ -7,18 +7,13 @@ from app.models import Claim, Document, DocumentChunk, ExtractedTable
 from app.tuning.snapshot import diff_snapshots, take_snapshot
 
 THRESHOLDS_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "thresholds.yaml")
-REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "domain_registry.yaml")
 
 
 def _thresholds():
     return yaml.safe_load(open(THRESHOLDS_PATH))
 
 
-def _registry():
-    return yaml.safe_load(open(REGISTRY_PATH))
-
-
-async def test_compare_runs_isolates_exactly_which_claims_changed_from_a_tolerance_edit():
+async def test_compare_runs_isolates_exactly_which_claims_changed_from_a_tolerance_edit(deterministic_registry):
     """The Phase 8.3 verification gate, almost verbatim: change arithmetic_tolerance_pct, re-run
     under old and new config, confirm the diff correctly isolates exactly which claims' verdicts
     changed. Stated 12.6% vs. a computed 12% (diff = 0.6 points) straddles the default 0.5%
@@ -60,7 +55,7 @@ async def test_compare_runs_isolates_exactly_which_claims_changed_from_a_toleran
 
     original_thresholds_text = open(THRESHOLDS_PATH).read()
     try:
-        registry = _registry()
+        registry = deterministic_registry  # tolerance only matters on the deterministic path
 
         # snapshot A: default tolerance (0.5) — 0.6-point difference is contradicted
         path_a = await take_snapshot(document_id, _thresholds(), registry)
