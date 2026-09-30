@@ -114,6 +114,17 @@ def _merge_entities(llm_entities: list[dict], spacy_entities: list[dict]) -> lis
     return merged
 
 
+def _sanitize_db_string(s: str | None) -> str | None:
+    """Remove NUL and other non-printable C0 control characters that Postgres/asyncpg rejects.
+    Preserve common whitespace characters (tab, LF, CR)."""
+    if s is None:
+        return None
+    if not isinstance(s, str):
+        s = str(s)
+    # Remove C0 controls except \t (0x09), \n (0x0a), \r (0x0d)
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", s)
+
+
 # Entity types router.md's rule 2 says must always be routed externally "regardless of in-document
 # matches" — a filed figure, a statutory rate, a regulator's position, a market fact. ORG is
 # deliberately excluded even though rule 2 lists it: a bare company-name mention is far weaker
@@ -349,11 +360,24 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
 
             if not route_value:
                 logger.warning("Unable to determine routing decision route for claim: %s (raw: %r)", claim_data.get("text"), route)
+            # Sanitize text fields to avoid invalid byte sequences (e.g. NUL) sent to Postgres.
+            sanitized_claim_text = _sanitize_db_string(claim_data.get("text")) or ""
+            sanitized_source_span = _sanitize_db_string(claim_data.get("source_span"))
+            sanitized_routing_reasoning = _sanitize_db_string(routing_reasoning) or ""
+            sanitized_suggested_queries = [q for q in ([_sanitize_db_string(q) for q in suggested_queries] or [])]
+            sanitized_entities = [
+                {"text": _sanitize_db_string(e.get("text")) or "", "label": _sanitize_db_string(e.get("label")) or ""}
+                for e in merged_entities
+            ]
+            sanitized_domain = _sanitize_db_string(domain_result.get("domain")) or ""
+            sanitized_domain_source = _sanitize_db_string(domain_result.get("source")) or ""
+            sanitized_requires = [r for r in ([_sanitize_db_string(r) for r in (claim_data.get("requires") or [])] or [])]
+
             # Check for an existing identical claim text in this document — this avoids
             # re-inserting exact duplicates across re-runs.
             existing_same_text = (
                 await session.execute(
-                    select(Claim).where(Claim.document_id == document_id, Claim.claim_text == claim_data["text"]) 
+                    select(Claim).where(Claim.document_id == document_id, Claim.claim_text == sanitized_claim_text)
                 )
             ).scalar_one_or_none()
             if existing_same_text is not None:
@@ -395,19 +419,19 @@ async def extract_claims_for_document(session: AsyncSession, document_id: uuid.U
             claim = Claim(
                 document_id=document_id,
                 chunk_id=chunk.id,
-                claim_text=claim_data["text"],
-                source_span=claim_data["source_span"],
-                claim_type=claim_data["claim_type"],
+                claim_text=sanitized_claim_text,
+                source_span=sanitized_source_span,
+                claim_type=claim_data.get("claim_type"),
                 scope=route_value,
-                requires=claim_data["requires"],
-                domain=domain_result["domain"],
-                domain_confidence=domain_result["confidence"],
-                domain_source=domain_result["source"],
+                requires=sanitized_requires,
+                domain=sanitized_domain,
+                domain_confidence=domain_result.get("confidence"),
+                domain_source=sanitized_domain_source,
                 cites_external_source=claim_data.get("cites_external_source", False),
                 is_opinion_or_unverifiable=claim_data.get("is_opinion_or_unverifiable", False),
-                routing_decision=routing_reasoning,
-                suggested_search_queries=suggested_queries,
-                entities=merged_entities,
+                routing_decision=sanitized_routing_reasoning,
+                suggested_search_queries=sanitized_suggested_queries,
+                entities=sanitized_entities,
                 embedding=embedding,
             )
             session.add(claim)

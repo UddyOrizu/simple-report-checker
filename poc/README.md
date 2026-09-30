@@ -14,7 +14,7 @@ LLM review (a verifier/challenger pair, or a multi-model vote panel for internal
 
 ```
 upload (.pdf / .docx)
-  → convert to Markdown, in page batches       marker-pdf, or pdfplumber/Tesseract; mammoth for Word
+  → convert to Markdown, in page batches       PyMuPDF4LLM, or pdfplumber/Tesseract; mammoth for Word
   → generate headings (if the document has none) LLM
   → chunk + build the section tree + summarize  heading levels, preamble, long sections split into parts
   → store sections, chunks, embeddings
@@ -58,7 +58,7 @@ Wait for both services to report healthy, then set up the backend and run migrat
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate
-pip install -e .                    # add ".[marker]" for marker-pdf PDF conversion (see below)
+pip install -e .                    # add ".[pymupdf4llm]" for PyMuPDF4LLM PDF conversion (see below)
 python -m spacy download en_core_web_sm
 python -m spacy download en_core_web_trf
 alembic upgrade head
@@ -100,7 +100,7 @@ Docker:
 | `HF_TOKEN` | *(empty)* | Hugging Face token for the `fino1` voter (TheFinAI/Fin-o1-8B). A missing token just drops that voter from the vote |
 | `FINO1_MODEL_ID` | `TheFinAI/Fin-o1-8B` | Override the specialized finance model used by the `fino1` voter |
 | `HF_INFERENCE_BASE_URL` | *(empty; uses HF's shared routing)* | Set only if Fin-o1-8B is deployed as a dedicated HF Inference Endpoint |
-| `TORCH_DEVICE` | auto (`cuda` → `mps` → `cpu`) | Device for marker-pdf's models, if installed |
+| `TORCH_DEVICE` | auto (`cuda` → `mps` → `cpu`) | Device for compute-heavy operations (unused with PyMuPDF4LLM) |
 | `STORAGE_DIR` | `./storage` | Where uploaded documents are stored on disk |
 
 ## Configuration
@@ -123,24 +123,21 @@ settings produced them.
 Uploads are converted to Markdown before parsing, so the section tree gets a real heading hierarchy
 (`#`/`##`/`###` levels) instead of guessing headings from font sizes:
 
-- **PDF**: [marker-pdf 0.3.2](https://pypi.org/project/marker-pdf/0.3.2/), an optional extra
-  because it pulls in torch plus surya's layout/OCR/table models (several GB, downloaded on first
-  use) and pins older Pillow/regex. Install with `pip install -e ".[marker]"` (or
-  `docker compose build --build-arg INSTALL_EXTRAS=marker`). Without it, PDFs fall back to the
-  pdfplumber/Tesseract parser. marker is GPL-3.0 licensed, so check that suits your distribution.
+- **PDF**: [PyMuPDF4LLM](https://pypi.org/project/PyMuPDF4LLM/), an optional extra
+  for enhanced PDF-to-Markdown conversion. Install with `pip install -e ".[pymupdf4llm]"` (or
+  `docker compose build --build-arg INSTALL_EXTRAS=pymupdf4llm`). Without it, PDFs fall back to the
+  pdfplumber/Tesseract parser.
 - **Word (.docx)**: mammoth + markdownify, always available. Legacy `.doc` files aren't
   supported; save them as `.docx` first.
 
 Both are toggled under `markdown_conversion` in `ingestion.yaml`. The rendered Markdown is stored on
 `documents.markdown`, and each section's own body on `document_sections.content`.
 
-Only conversion runs incrementally (`app/ingestion/conversion.py`). marker converts
+Only conversion runs incrementally (`app/ingestion/conversion.py`). PyMuPDF4LLM converts
 `marker_pages_per_batch` pages per call, the native parser one page at a time, and a `.docx` in one
 go, with `ingest_progress` events in between. Everything after that runs once over the whole
 document, and chunks are embedded and written `persist_chunk_batch` at a time so memory stays
-bounded. marker drops a blank page's page break, so when a batch comes back with fewer page breaks
-than pages, its page numbers are re-derived from the PDF's own text layer. Concurrent uploads share
-marker's models and take turns batch by batch.
+bounded. Page numbers are derived from the PDF's structure. Concurrent uploads take turns batch by batch.
 
 ### Section tree
 
@@ -352,12 +349,11 @@ python scripts/reprocess_documents.py                          # see Reprocessin
 - **API container fails to build / build is slow**: the first build downloads `en_core_web_trf`
   (a transformer-based spaCy model) and a CPU-only PyTorch wheel; expect a few minutes and a ~3GB
   image. Subsequent builds are cached.
-- **PDF conversion is very slow, or re-downloads models**: marker runs on the CPU in the default
-  image, and its models download into the container, so they're fetched again whenever the container
-  is recreated. Use a GPU host (`TORCH_DEVICE=cuda`) and mount a volume for the Hugging Face cache,
-  or leave marker uninstalled to use the faster native parser.
-- **"markdown_conversion.pdf is enabled but marker-pdf isn't installed"**: expected when marker
-  isn't installed; PDFs use the native parser. Install the `marker` extra, or set
+- **PDF conversion is very slow**: PyMuPDF4LLM runs on the CPU in the default image.
+  Ensure your system has adequate resources, or use the native parser by setting
+  `markdown_conversion.pdf: false` for faster processing.
+- **"markdown_conversion.pdf is enabled but PyMuPDF4LLM isn't installed"**: expected when PyMuPDF4LLM
+  isn't installed; PDFs use the native parser. Install the `pymupdf4llm` extra, or set
   `markdown_conversion.pdf: false` to silence it.
 - **Evidence has no page number, or vectorless retrieval finds nothing for an older document**: the
   document was ingested before Markdown conversion existed. Reprocess it (see above).

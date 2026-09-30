@@ -1,14 +1,16 @@
 import os
 from functools import lru_cache
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from pydantic import BaseModel
 
 import truststore
 from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    from agno.models.anthropic import Claude
 
 load_dotenv()
 
@@ -81,6 +83,8 @@ def build_model(tier: Tier = "standard"):
     model eagerly at import time need that deferred to require_llm_credentials() at call time;
     callers that only ever build lazily (like _agent() below) can call both back to back."""
     if LLM_PROVIDER == "anthropic":
+        from agno.models.anthropic import Claude
+
         return Claude(id=_ANTHROPIC_MODEL_IDS[tier], api_key=os.getenv("ANTHROPIC_API_KEY"))
     if LLM_PROVIDER == "openai":
         return OpenAIChat(

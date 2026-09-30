@@ -2,11 +2,11 @@
 page batches with progress callbacks in between. The same code runs for every file size; a
 one-page memo is simply a single batch.
 
-  PDF, marker installed  -> marker converts `marker_pages_per_batch` pages per call -> parse_markdown
-  PDF, no marker         -> pdfplumber (native text) or Tesseract (scanned), one page per batch
-  DOCX                   -> mammoth + markdownify (or python-docx), one batch — Word has no pages
+  PDF, PyMuPDF4LLM installed  -> PyMuPDF4LLM converts `marker_pages_per_batch` pages per call -> parse_markdown
+  PDF, no PyMuPDF4LLM         -> pdfplumber (native text) or Tesseract (scanned), one page per batch
+  DOCX                        -> mammoth + markdownify (or python-docx), one batch — Word has no pages
 
-Every batch is thread-offloaded (marker and OCR are CPU/GPU-bound), so the API stays responsive
+Every batch is thread-offloaded (PyMuPDF4LLM and OCR are CPU-bound), so the API stays responsive
 while a large document converts. Everything after conversion — generated headings, chunking, the
 structural index, summaries, persistence — happens once over the whole document in pipeline.py.
 """
@@ -22,7 +22,7 @@ import pdfplumber
 import pymupdf as fitz
 
 from app.ingestion.converters.docx_to_markdown import docx_to_markdown
-from app.ingestion.converters.pdf_to_markdown import marker_available, pdf_pages_to_markdown
+from app.ingestion.converters.pdf_to_markdown import pymupdf4llm_available, pdf_pages_to_markdown
 from app.ingestion.parsers.docx_parser import parse_docx
 from app.ingestion.parsers.markdown_parser import PAGE_SEPARATOR_RE, elements_to_markdown, parse_markdown
 from app.ingestion.parsers.pdf_parser import is_native_page, parse_native_page, parse_ocr_page
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # PDFs get an exact page count for free from PyMuPDF and never use this.
 DOCX_WORDS_PER_PAGE = 400
 
-# How many of an element's opening words are looked up in the PDF's own text layer when a marker
+# How many of an element's opening words are looked up in the PDF's own text layer when a
 # batch's page numbers have to be re-derived (see _realign_pages).
 PAGE_ANCHOR_WORDS = 5
 
@@ -51,10 +51,10 @@ class ConvertedDocument:
 
 
 def uses_marker_for_pdf(config: dict) -> bool:
-    """PDFs go through marker only when it's both enabled in config and actually installed — it's
+    """PDFs go through PyMuPDF4LLM only when it's both enabled in config and actually installed — it's
     an optional extra, and a missing install falls back to the pdfplumber/OCR parser rather than
     failing the upload."""
-    return config.get("markdown_conversion", {}).get("pdf", False) and marker_available()
+    return config.get("markdown_conversion", {}).get("pdf", False) and pymupdf4llm_available()
 
 
 def estimate_docx_page_count(elements: list[dict]) -> int:
@@ -73,7 +73,7 @@ async def convert_document(path: str, config: dict, on_progress: ProgressCallbac
         if uses_marker_for_pdf(config):
             return await _convert_pdf_with_marker(path, config, on_progress)
         if config.get("markdown_conversion", {}).get("pdf", False):
-            logger.warning("markdown_conversion.pdf is enabled but marker-pdf isn't installed — using the native PDF parser")
+            logger.warning("markdown_conversion.pdf is enabled but PyMuPDF4LLM isn't installed — using the native PDF parser")
         return await _convert_pdf_natively(path, config, on_progress)
     raise ValueError(f"Unsupported file type: {ext}")
 

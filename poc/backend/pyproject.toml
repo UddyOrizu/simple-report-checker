@@ -29,7 +29,7 @@ dependencies = [
     "python-dotenv==1.1.0",
     "truststore==0.10.4",
     "openai==1.77.0",
-    "anthropic>=0.40",
+    "anthropic>=0.40,<1.0",
     "tiktoken==0.14.0",
     "beautifulsoup4==4.15.0",
     "jsonpickle==4.1.2",
@@ -39,13 +39,13 @@ dependencies = [
     "exa-py>=2.22.0",
     "truststore",
     "mammoth>=1.8",
+    "pymupdf4llm>=0.1.0",
 ]
 
 [project.optional-dependencies]
-# PDF -> Markdown conversion (app/ingestion/converters/pdf_to_markdown.py). Heavy: torch + surya
-# layout/OCR models (several GB, downloaded on first use), and pins Pillow<11 / regex<2025.
-# GPL-3.0 licensed. Without it, PDFs fall back to the pdfplumber/OCR parser.
-marker = ["marker-pdf==0.3.2"]
+# PDF -> Markdown conversion (app/ingestion/converters/pdf_to_markdown.py) using PyMuPDF4LLM.
+# Optional: without it, PDFs fall back to the pdfplumber/OCR parser.
+pymupdf4llm = ["pymupdf4llm>=0.1.0"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

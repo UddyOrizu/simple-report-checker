@@ -8,7 +8,7 @@ from app.ingestion.conversion import convert_document
 SEPARATOR = "\n\n" + "-" * 48 + "\n\n"
 PAGE_TEXTS = [
     "Alpha revenue discussion opens the report",
-    "",  # blank page — marker drops its page separator
+    "",  # blank page
     "Gamma regional breakdown for APAC markets",
     "Delta cost programme savings summary",
     "Epsilon headcount and attrition figures",

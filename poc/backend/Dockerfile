@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Optional extras, e.g. `docker compose build --build-arg INSTALL_EXTRAS=marker` for marker-pdf's
-# PDF -> Markdown conversion (adds torch-based layout/OCR models; see pyproject.toml).
+# Optional extras, e.g. `docker compose build --build-arg INSTALL_EXTRAS=pymupdf4llm` for PyMuPDF4LLM's
+# PDF -> Markdown conversion (see pyproject.toml).
 ARG INSTALL_EXTRAS=""
 
 COPY pyproject.toml ./

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ingestion.sentence_level_chunker import EmbeddingService
 from app.models import Claim, DocumentChunk, DocumentSection, Evidence, ExtractedTable
 from app.retrieval.matching import citation, matches_requires, table_text
+from app.db import async_session
 
 # A hit below this cosine similarity is too weak to trust as evidence on its own — this mirrors
 # the "strong in-document match" threshold the router prompt itself uses (router.md rule 3) so a
@@ -98,7 +99,16 @@ async def query_similar(
 
     stmt = stmt.order_by(distance).limit(top_k)
 
-    rows = (await session.execute(stmt)).all()
+    # Run the similarity query on a short-lived session so concurrent callers
+    # don't share the same AsyncSession instance. This ensures pooled connections
+    # are returned to the pool explicitly via the session context manager.
+    try:
+        async with async_session() as temp_sess:
+            rows = (await temp_sess.execute(stmt)).all()
+    except Exception:
+        # Fall back to executing on the caller's session if creating a short-
+        # lived session fails for any reason.
+        rows = (await session.execute(stmt)).all()
 
     return [
         {

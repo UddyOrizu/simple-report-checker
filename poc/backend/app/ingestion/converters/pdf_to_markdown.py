@@ -1,66 +1,63 @@
-"""PDF -> Markdown via marker-pdf 0.3.2 (https://pypi.org/project/marker-pdf/0.3.2/).
+"""PDF -> Markdown via PyMuPDF4LLM (https://pypi.org/project/PyMuPDF4LLM/).
 
-marker is an optional dependency (`pip install -e ".[marker]"`): it pulls in torch + surya's
-layout/OCR/table models (several GB, downloaded on first use) and pins older Pillow/regex than the
-rest of the backend, so a deployment that doesn't want it keeps the pdfplumber/OCR parser instead —
-see app/ingestion/conversion.py, which checks marker_available() first.
+PyMuPDF4LLM is an optional dependency (`pip install -e ".[pymupdf4llm]"`): it uses PyMuPDF's native
+text extraction capabilities with improved layout understanding for structured Markdown output.
+A deployment that doesn't want it keeps the pdfplumber/OCR parser instead — see
+app/ingestion/conversion.py, which checks pymupdf4llm_available() first.
 """
 
 import importlib.util
 import threading
 
-# marker's layout/OCR/texify/table models are expensive to load (tens of seconds, GBs of RAM) —
-# loaded once per process on first use and reused for every later document, never at import time,
-# so the API still starts instantly when no PDF is ever uploaded.
-_models = None
-_models_lock = threading.Lock()
-# One conversion at a time per process: every upload's background task shares the models above,
-# and marker isn't built for concurrent inference on them (two PDFs at once can exhaust GPU memory
-# or interleave state). Held per batch, not per document, so concurrent uploads take turns batch by
-# batch and all keep reporting progress.
+# PyMuPDF4LLM is loaded once per process on first use and reused for every later document,
+# never at import time, so the API still starts instantly when no PDF is ever uploaded.
+_pymupdf4llm = None
+_pymupdf4llm_lock = threading.Lock()
+# One conversion at a time per process to avoid concurrent PDF processing issues.
 _convert_lock = threading.Lock()
 
+# Separator to mark page boundaries in the output (consistent with marker's format)
+PAGE_SEPARATOR = "\n\n" + "-" * 48 + "\n\n"
 
+
+def pymupdf4llm_available() -> bool:
+    return importlib.util.find_spec("pymupdf4llm") is not None
+
+
+# Alias for backward compatibility
 def marker_available() -> bool:
-    return importlib.util.find_spec("marker") is not None
+    """Backward compatibility: checks if PyMuPDF4LLM is available."""
+    return pymupdf4llm_available()
 
 
-def _load_models():
-    global _models
-    with _models_lock:
-        if _models is None:
-            from marker.models import load_all_models
-
-            _models = load_all_models()
-    return _models
+def _load_pymupdf4llm():
+    global _pymupdf4llm
+    with _pymupdf4llm_lock:
+        if _pymupdf4llm is None:
+            import pymupdf4llm
+            _pymupdf4llm = pymupdf4llm
+    return _pymupdf4llm
 
 
 def pdf_pages_to_markdown(path: str, start_page: int, max_pages: int, config: dict) -> str:
     """Converts pages [start_page, start_page + max_pages) (0-based) of a PDF to Markdown, so a
-    large document can be converted in batches with progress in between. Output is paginated —
-    marker inserts its PAGE_SEPARATOR (a line of 48 dashes) at page boundaries — so
-    markdown_parser can recover page numbers. Caveat: marker drops blocks with no text, including
-    a blank page's separator, so a batch containing an empty page comes back with fewer
-    separators than pages; app/ingestion/conversion.py detects that and re-derives page numbers.
+    large document can be converted in batches with progress in between. Output is paginated with
+    PAGE_SEPARATOR (a line of 48 dashes) at page boundaries, so markdown_parser can recover page
+    numbers.
 
-    Image extraction is off: images aren't claims, and marker would otherwise emit `![...](...)`
-    references to files we never save."""
-    from marker.convert import convert_single_pdf
-    from marker.settings import settings
-
-    settings.PAGINATE_OUTPUT = True
-    settings.EXTRACT_IMAGES = False
-
-    conversion = config.get("markdown_conversion", {})
-    models = _load_models()
+    Image extraction is off by default: images aren't claims, and extracting them would add
+    unnecessary data to the Markdown output."""
+    pymupdf4llm = _load_pymupdf4llm()
+    
     with _convert_lock:
-        full_text, _images, _metadata = convert_single_pdf(
-            path,
-            models,
-            start_page=start_page,
-            max_pages=max_pages,
-            langs=conversion.get("marker_langs"),
-            batch_multiplier=conversion.get("marker_batch_multiplier", 1),
-            ocr_all_pages=conversion.get("marker_ocr_all_pages", False),
-        )
-    return full_text
+        # Extract text from the specified page range
+        markdown_parts = []
+        for page_num in range(start_page, start_page + max_pages):
+            page_markdown = pymupdf4llm.to_markdown(path, pages=[page_num])
+            if page_markdown:
+                markdown_parts.append(page_markdown)
+                # Add page separator between pages
+                if page_num < start_page + max_pages - 1:
+                    markdown_parts.append(PAGE_SEPARATOR)
+        
+        return "".join(markdown_parts)
